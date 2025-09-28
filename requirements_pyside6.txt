@@ -1,0 +1,25 @@
+# AI辅助财务报表数据映射与填充工具 - PySide6版本
+# 依赖包列表
+
+# PySide6 - Qt GUI框架
+PySide6>=6.4.0
+
+# Excel处理
+openpyxl>=3.1.0
+pandas>=1.5.0
+
+# HTTP请求（AI API调用）
+requests>=2.28.0
+
+# 数据处理
+numpy>=1.24.0
+
+# 日志和配置
+python-dateutil>=2.8.0
+
+# 可选：更好的性能
+xlsxwriter>=3.0.0  # Excel写入优化
+lxml>=4.9.0       # XML处理优化
+
+# 开发和测试
+pytest>=7.0.0     # 测试框架（可选）

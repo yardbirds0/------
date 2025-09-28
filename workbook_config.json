@@ -1,0 +1,99 @@
+{
+  "file_info": {
+    "file_path": "（科电）国资委、财政快报模板-纯净版 的副本.xlsx",
+    "file_name": "（科电）国资委、财政快报模板-纯净版 的副本.xlsx",
+    "saved_at": "2025-09-26T18:21:00.886915"
+  },
+  "classification": {
+    "flash_reports": [
+      "财政局-快报",
+      "国资委-企业财务快报",
+      "企业财务快报补充统计报表",
+      "企业财务快报利润因素分析表",
+      "企业财务快报预报表",
+      "资产负债表",
+      "利润表",
+      "现金流量表",
+      "Sheet1"
+    ],
+    "data_sources": [
+      "科目余额表（5级含未过账）",
+      "上年科目余额表",
+      "科目余额表2022"
+    ]
+  },
+  "worksheets_info": {
+    "财政局-快报": {
+      "type": "flash_report",
+      "max_row": 74,
+      "max_column": 5,
+      "fill_rate": 21.89
+    },
+    "国资委-企业财务快报": {
+      "type": "flash_report",
+      "max_row": 75,
+      "max_column": 5,
+      "fill_rate": 36.8
+    },
+    "企业财务快报补充统计报表": {
+      "type": "flash_report",
+      "max_row": 35,
+      "max_column": 9,
+      "fill_rate": 23.49
+    },
+    "企业财务快报利润因素分析表": {
+      "type": "flash_report",
+      "max_row": 48,
+      "max_column": 3,
+      "fill_rate": 26.39
+    },
+    "企业财务快报预报表": {
+      "type": "flash_report",
+      "max_row": 63,
+      "max_column": 8,
+      "fill_rate": 6.15
+    },
+    "资产负债表": {
+      "type": "flash_report",
+      "max_row": 79,
+      "max_column": 9,
+      "fill_rate": 63.15
+    },
+    "利润表": {
+      "type": "flash_report",
+      "max_row": 77,
+      "max_column": 7,
+      "fill_rate": 53.25
+    },
+    "现金流量表": {
+      "type": "flash_report",
+      "max_row": 91,
+      "max_column": 7,
+      "fill_rate": 57.46
+    },
+    "科目余额表（5级含未过账）": {
+      "type": "data_source",
+      "max_row": 1965,
+      "max_column": 12,
+      "fill_rate": 19.43
+    },
+    "上年科目余额表": {
+      "type": "data_source",
+      "max_row": 1965,
+      "max_column": 12,
+      "fill_rate": 19.57
+    },
+    "Sheet1": {
+      "type": "flash_report",
+      "max_row": 21,
+      "max_column": 6,
+      "fill_rate": 100.0
+    },
+    "科目余额表2022": {
+      "type": "data_source",
+      "max_row": 476,
+      "max_column": 12,
+      "fill_rate": 31.18
+    }
+  }
+}

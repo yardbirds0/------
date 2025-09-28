@@ -1,0 +1,342 @@
+{
+  "table_schemas": {
+    "trial_balance": {
+      "name": "科目余额表",
+      "name_patterns": [
+        "科目余额表",
+        "试算平衡表",
+        "trial.*balance",
+        "余额表"
+      ],
+      "key_columns": {
+        "account_code": {
+          "name": "科目代码",
+          "patterns": ["科目代码", "代码", "account.*code", "code"],
+          "data_type": "text",
+          "required": true,
+          "position": "early",
+          "description": "会计科目编码，用于确定层级结构"
+        },
+        "account_name": {
+          "name": "科目名称",
+          "patterns": ["科目名称", "名称", "account.*name", "科目"],
+          "data_type": "text",
+          "required": true,
+          "position": "early",
+          "description": "会计科目名称"
+        }
+      },
+      "data_columns": [
+        {
+          "group": "beginning_balance",
+          "name": "年初余额",
+          "sub_columns": [
+            {
+              "name": "年初余额-借方",
+              "patterns": ["年初.*借方", "年初.*借", "beginning.*debit"],
+              "data_type": "debit",
+              "category": "beginning"
+            },
+            {
+              "name": "年初余额-贷方",
+              "patterns": ["年初.*贷方", "年初.*贷", "beginning.*credit"],
+              "data_type": "credit",
+              "category": "beginning"
+            }
+          ]
+        },
+        {
+          "group": "opening_balance",
+          "name": "期初余额",
+          "sub_columns": [
+            {
+              "name": "期初余额-借方",
+              "patterns": ["期初.*借方", "期初.*借", "opening.*debit"],
+              "data_type": "debit",
+              "category": "opening"
+            },
+            {
+              "name": "期初余额-贷方",
+              "patterns": ["期初.*贷方", "期初.*贷", "opening.*credit"],
+              "data_type": "credit",
+              "category": "opening"
+            }
+          ]
+        },
+        {
+          "group": "current_movement",
+          "name": "本期发生额",
+          "sub_columns": [
+            {
+              "name": "本期发生额-借方",
+              "patterns": ["本期.*借方", "本期.*借", "current.*debit", "本期.*发生.*借"],
+              "data_type": "debit",
+              "category": "current"
+            },
+            {
+              "name": "本期发生额-贷方",
+              "patterns": ["本期.*贷方", "本期.*贷", "current.*credit", "本期.*发生.*贷"],
+              "data_type": "credit",
+              "category": "current"
+            }
+          ]
+        },
+        {
+          "group": "ending_balance",
+          "name": "期末余额",
+          "sub_columns": [
+            {
+              "name": "期末余额-借方",
+              "patterns": ["期末.*借方", "期末.*借", "ending.*debit"],
+              "data_type": "debit",
+              "category": "ending"
+            },
+            {
+              "name": "期末余额-贷方",
+              "patterns": ["期末.*贷方", "期末.*贷", "ending.*credit"],
+              "data_type": "credit",
+              "category": "ending"
+            }
+          ]
+        }
+      ],
+      "hierarchy_rules": {
+        "use_account_code": true,
+        "code_levels": [
+          {"length": 4, "level": 1, "description": "一级科目"},
+          {"length": 6, "level": 2, "description": "二级科目"},
+          {"length": 8, "level": 3, "description": "三级科目"},
+          {"length": 10, "level": 4, "description": "四级科目"}
+        ]
+      }
+    },
+    "balance_sheet": {
+      "name": "资产负债表",
+      "name_patterns": [
+        "资产负债表",
+        "balance.*sheet",
+        "资产.*负债"
+      ],
+      "key_columns": {
+        "item_name": {
+          "name": "项目名称",
+          "patterns": ["项目", "资产", "负债", "所有者权益", "item"],
+          "data_type": "text",
+          "required": true,
+          "position": "first",
+          "description": "资产负债表项目名称"
+        }
+      },
+      "data_columns": [
+        {
+          "group": "ending_amount",
+          "name": "期末余额",
+          "sub_columns": [
+            {
+              "name": "期末余额",
+              "patterns": ["期末.*余额", "期末数", "ending.*balance", "期末.*金额"],
+              "data_type": "amount",
+              "category": "ending"
+            }
+          ]
+        },
+        {
+          "group": "beginning_amount",
+          "name": "年初余额",
+          "sub_columns": [
+            {
+              "name": "年初余额",
+              "patterns": ["年初.*余额", "年初数", "beginning.*balance", "年初.*金额"],
+              "data_type": "amount",
+              "category": "beginning"
+            }
+          ]
+        },
+        {
+          "group": "previous_year",
+          "name": "上年同期",
+          "sub_columns": [
+            {
+              "name": "上年同期",
+              "patterns": ["上年.*同期", "去年.*同期", "previous.*year"],
+              "data_type": "amount",
+              "category": "previous"
+            }
+          ]
+        }
+      ],
+      "hierarchy_rules": {
+        "use_numbering": true,
+        "use_indentation": true
+      }
+    },
+    "income_statement": {
+      "name": "利润表",
+      "name_patterns": [
+        "利润表",
+        "损益表",
+        "income.*statement",
+        "profit.*loss"
+      ],
+      "key_columns": {
+        "item_name": {
+          "name": "项目名称",
+          "patterns": ["项目", "科目", "item"],
+          "data_type": "text",
+          "required": true,
+          "position": "first",
+          "description": "利润表项目名称"
+        }
+      },
+      "data_columns": [
+        {
+          "group": "current_period",
+          "name": "本期金额",
+          "sub_columns": [
+            {
+              "name": "本期金额",
+              "patterns": ["本期.*金额", "本期数", "current.*period", "本期.*数额"],
+              "data_type": "amount",
+              "category": "current"
+            }
+          ]
+        },
+        {
+          "group": "previous_period",
+          "name": "上期金额",
+          "sub_columns": [
+            {
+              "name": "上期金额",
+              "patterns": ["上期.*金额", "上期数", "previous.*period", "上期.*数额"],
+              "data_type": "amount",
+              "category": "previous"
+            }
+          ]
+        },
+        {
+          "group": "year_to_date",
+          "name": "本年累计",
+          "sub_columns": [
+            {
+              "name": "本年累计",
+              "patterns": ["本年.*累计", "年累计", "year.*to.*date", "累计数"],
+              "data_type": "amount",
+              "category": "ytd"
+            }
+          ]
+        },
+        {
+          "group": "previous_ytd",
+          "name": "上年累计",
+          "sub_columns": [
+            {
+              "name": "上年累计",
+              "patterns": ["上年.*累计", "去年.*累计", "previous.*ytd"],
+              "data_type": "amount",
+              "category": "previous_ytd"
+            }
+          ]
+        }
+      ],
+      "hierarchy_rules": {
+        "use_numbering": true,
+        "use_indentation": true
+      }
+    },
+    "cash_flow": {
+      "name": "现金流量表",
+      "name_patterns": [
+        "现金流量表",
+        "cash.*flow",
+        "现金.*流量"
+      ],
+      "key_columns": {
+        "item_name": {
+          "name": "项目名称",
+          "patterns": ["项目", "现金流量项目", "item"],
+          "data_type": "text",
+          "required": true,
+          "position": "first",
+          "description": "现金流量项目名称"
+        }
+      },
+      "data_columns": [
+        {
+          "group": "current_period",
+          "name": "本期金额",
+          "sub_columns": [
+            {
+              "name": "本期金额",
+              "patterns": ["本期.*金额", "本期数", "current.*amount"],
+              "data_type": "amount",
+              "category": "current"
+            }
+          ]
+        },
+        {
+          "group": "previous_period",
+          "name": "上期金额",
+          "sub_columns": [
+            {
+              "name": "上期金额",
+              "patterns": ["上期.*金额", "上期数", "previous.*amount"],
+              "data_type": "amount",
+              "category": "previous"
+            }
+          ]
+        }
+      ],
+      "hierarchy_rules": {
+        "use_numbering": true,
+        "use_indentation": true,
+        "special_sections": ["经营活动", "投资活动", "筹资活动"]
+      }
+    }
+  },
+  "column_matching_rules": {
+    "priority_order": [
+      "exact_match",
+      "pattern_match",
+      "fuzzy_match"
+    ],
+    "matching_algorithms": {
+      "exact_match": {
+        "description": "完全匹配列头文本",
+        "threshold": 1.0
+      },
+      "pattern_match": {
+        "description": "正则表达式匹配",
+        "threshold": 0.9
+      },
+      "fuzzy_match": {
+        "description": "模糊匹配",
+        "threshold": 0.8
+      }
+    }
+  },
+  "data_type_definitions": {
+    "debit": {
+      "name": "借方",
+      "description": "借方金额",
+      "format": "numeric",
+      "sign": "positive"
+    },
+    "credit": {
+      "name": "贷方",
+      "description": "贷方金额",
+      "format": "numeric",
+      "sign": "positive"
+    },
+    "amount": {
+      "name": "金额",
+      "description": "金额数值",
+      "format": "numeric",
+      "sign": "any"
+    },
+    "text": {
+      "name": "文本",
+      "description": "文本内容",
+      "format": "string"
+    }
+  }
+}

@@ -1,0 +1,99 @@
+{
+  "total_sheets": 12,
+  "flash_report_count": 0,
+  "data_source_count": 12,
+  "flash_report_sheets": [],
+  "data_source_sheets": [
+    "财政局-快报",
+    "国资委-企业财务快报",
+    "企业财务快报补充统计报表",
+    "企业财务快报利润因素分析表",
+    "企业财务快报预报表",
+    "资产负债表",
+    "利润表",
+    "现金流量表",
+    "科目余额表（5级含未过账）",
+    "上年科目余额表",
+    "Sheet1",
+    "科目余额表2022"
+  ],
+  "trial_balance_sheets_found": [
+    "科目余额表（5级含未过账）",
+    "上年科目余额表",
+    "科目余额表2022"
+  ],
+  "all_sheets_classification": {
+    "财政局-快报": {
+      "sheet_type": "SheetType.DATA_SOURCE",
+      "is_flash_report": true,
+      "in_flash_list": false,
+      "in_data_list": true
+    },
+    "国资委-企业财务快报": {
+      "sheet_type": "SheetType.DATA_SOURCE",
+      "is_flash_report": true,
+      "in_flash_list": false,
+      "in_data_list": true
+    },
+    "企业财务快报补充统计报表": {
+      "sheet_type": "SheetType.DATA_SOURCE",
+      "is_flash_report": true,
+      "in_flash_list": false,
+      "in_data_list": true
+    },
+    "企业财务快报利润因素分析表": {
+      "sheet_type": "SheetType.DATA_SOURCE",
+      "is_flash_report": true,
+      "in_flash_list": false,
+      "in_data_list": true
+    },
+    "企业财务快报预报表": {
+      "sheet_type": "SheetType.DATA_SOURCE",
+      "is_flash_report": true,
+      "in_flash_list": false,
+      "in_data_list": true
+    },
+    "资产负债表": {
+      "sheet_type": "SheetType.DATA_SOURCE",
+      "is_flash_report": false,
+      "in_flash_list": false,
+      "in_data_list": true
+    },
+    "利润表": {
+      "sheet_type": "SheetType.DATA_SOURCE",
+      "is_flash_report": false,
+      "in_flash_list": false,
+      "in_data_list": true
+    },
+    "现金流量表": {
+      "sheet_type": "SheetType.DATA_SOURCE",
+      "is_flash_report": false,
+      "in_flash_list": false,
+      "in_data_list": true
+    },
+    "科目余额表（5级含未过账）": {
+      "sheet_type": "SheetType.DATA_SOURCE",
+      "is_flash_report": false,
+      "in_flash_list": false,
+      "in_data_list": true
+    },
+    "上年科目余额表": {
+      "sheet_type": "SheetType.DATA_SOURCE",
+      "is_flash_report": false,
+      "in_flash_list": false,
+      "in_data_list": true
+    },
+    "Sheet1": {
+      "sheet_type": "SheetType.DATA_SOURCE",
+      "is_flash_report": false,
+      "in_flash_list": false,
+      "in_data_list": true
+    },
+    "科目余额表2022": {
+      "sheet_type": "SheetType.DATA_SOURCE",
+      "is_flash_report": false,
+      "in_flash_list": false,
+      "in_data_list": true
+    }
+  }
+}

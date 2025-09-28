@@ -1,0 +1,99 @@
+{
+  "tasks": [
+    {
+      "id": "bcd849ba-154b-498c-a62c-9a81d7e50509",
+      "name": "创建诊断脚本验证数据提取问题",
+      "description": "创建一个诊断脚本来检查实际的data_columns内容，验证键名不匹配问题，确认数据确实被提取但键名不对",
+      "notes": "这个诊断脚本将帮助确认问题的根本原因",
+      "status": "pending",
+      "dependencies": [],
+      "createdAt": "2025-09-28T08:41:44.961Z",
+      "updatedAt": "2025-09-28T08:41:44.961Z",
+      "relatedFiles": [
+        {
+          "path": "tests/diagnose_data_columns.py",
+          "type": "CREATE",
+          "description": "诊断脚本文件"
+        }
+      ],
+      "implementationGuide": "创建tests/diagnose_data_columns.py脚本:\n1. 加载Excel文件并提取数据\n2. 遍历所有source_items\n3. 打印每个item的data_columns键值对\n4. 对比TableColumnRules中定义的标准键名\n5. 输出键名匹配情况报告",
+      "verificationCriteria": "脚本能成功运行并输出清晰的键名对比报告，显示实际键名与期望键名的差异",
+      "analysisResult": "修复数据显示空白和TargetItem属性缺失问题。数据空白是因为提取时生成的列键名与显示时查找的键名不匹配。TargetItem缺少data_type属性导致双击查看详情时崩溃。"
+    },
+    {
+      "id": "adcf981e-db11-408b-86bb-7a318e7d1498",
+      "name": "修复EnhancedDataExtractor列键名生成逻辑",
+      "description": "修改_generate_column_key方法，使其生成的键名与TableColumnRules中定义的标准键名完全一致",
+      "notes": "确保生成的键名与TableColumnRules.get_ordered_column_keys()返回的键名完全一致",
+      "status": "pending",
+      "dependencies": [
+        {
+          "taskId": "bcd849ba-154b-498c-a62c-9a81d7e50509"
+        }
+      ],
+      "createdAt": "2025-09-28T08:41:44.961Z",
+      "updatedAt": "2025-09-28T08:41:44.961Z",
+      "relatedFiles": [
+        {
+          "path": "modules/enhanced_data_extractor.py",
+          "type": "TO_MODIFY",
+          "description": "_generate_column_key方法",
+          "lineStart": 349,
+          "lineEnd": 456
+        }
+      ],
+      "implementationGuide": "修改modules/enhanced_data_extractor.py的_generate_column_key方法:\n1. 优先使用TableColumnRules.detect_table_type()检测表类型\n2. 根据表类型获取标准列规则列表\n3. 根据列头文本匹配到对应的标准键名\n4. 对于利润表：匹配'本期'→'本期金额'，'上期'→'上期金额'等\n5. 对于资产负债表：匹配'期末'→'期末余额'，'年初'→'年初余额'\n6. 对于科目余额表：处理二级列头，如'期末余额_借方'",
+      "verificationCriteria": "修改后的方法能为所有表类型生成正确的标准键名",
+      "analysisResult": "修复数据显示空白和TargetItem属性缺失问题。数据空白是因为提取时生成的列键名与显示时查找的键名不匹配。TargetItem缺少data_type属性导致双击查看详情时崩溃。"
+    },
+    {
+      "id": "082e6ac7-bc20-4ab6-8bd2-8fda7d8a68ba",
+      "name": "为TargetItem添加data_type属性",
+      "description": "在TargetItem类中添加data_type属性，避免访问时报错",
+      "notes": "这是一个简单但关键的修复，防止程序崩溃",
+      "status": "pending",
+      "dependencies": [],
+      "createdAt": "2025-09-28T08:41:44.961Z",
+      "updatedAt": "2025-09-28T08:41:44.961Z",
+      "relatedFiles": [
+        {
+          "path": "models/data_models.py",
+          "type": "TO_MODIFY",
+          "description": "TargetItem类定义",
+          "lineStart": 44,
+          "lineEnd": 89
+        }
+      ],
+      "implementationGuide": "修改models/data_models.py中的TargetItem类:\n1. 在字段定义中添加：data_type: str = 'text'\n2. 放在values字段之后，is_empty_target之前\n3. 默认值设为'text'，表示文本类型",
+      "verificationCriteria": "TargetItem实例能正常访问data_type属性而不报错",
+      "analysisResult": "修复数据显示空白和TargetItem属性缺失问题。数据空白是因为提取时生成的列键名与显示时查找的键名不匹配。TargetItem缺少data_type属性导致双击查看详情时崩溃。"
+    },
+    {
+      "id": "64585344-7ec2-4f39-82b6-07bb0325b6dc",
+      "name": "验证修复效果",
+      "description": "运行测试脚本验证数据显示问题已解决，所有表格都能正确显示数据",
+      "notes": "这是最终的验证步骤，确保所有问题都已解决",
+      "status": "pending",
+      "dependencies": [
+        {
+          "taskId": "adcf981e-db11-408b-86bb-7a318e7d1498"
+        },
+        {
+          "taskId": "082e6ac7-bc20-4ab6-8bd2-8fda7d8a68ba"
+        }
+      ],
+      "createdAt": "2025-09-28T08:41:44.961Z",
+      "updatedAt": "2025-09-28T08:41:44.961Z",
+      "relatedFiles": [
+        {
+          "path": "tests/verify_fixes.py",
+          "type": "CREATE",
+          "description": "验证脚本"
+        }
+      ],
+      "implementationGuide": "创建tests/verify_fixes.py验证脚本:\n1. 加载Excel文件并提取数据\n2. 创建SearchableSourceTree并填充数据\n3. 切换到不同的工作表\n4. 验证每个表的数据列都有值显示\n5. 模拟双击操作验证TargetItem.data_type不报错\n6. 输出验证报告",
+      "verificationCriteria": "所有表格数据正常显示，双击查看详情不报错",
+      "analysisResult": "修复数据显示空白和TargetItem属性缺失问题。数据空白是因为提取时生成的列键名与显示时查找的键名不匹配。TargetItem缺少data_type属性导致双击查看详情时崩溃。"
+    }
+  ]
+}

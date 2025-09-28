@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__shrimp-task-manager__plan_task",
+      "mcp__shrimp-task-manager__analyze_task",
+      "mcp__filesystem__directory_tree",
+      "mcp__sequential-thinking__sequentialthinking",
+      "mcp__shrimp-task-manager__reflect_task",
+      "mcp__shrimp-task-manager__split_tasks",
+      "mcp__filesystem__list_directory",
+      "mcp__filesystem__read_text_file",
+      "mcp__filesystem__search_files",
+      "mcp__serena__search_for_pattern",
+      "mcp__serena__find_file",
+      "mcp__serena__list_dir",
+      "mcp__serena__get_current_config",
+      "mcp__serena__activate_project",
+      "mcp__serena__get_symbols_overview",
+      "mcp__serena__find_symbol"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
