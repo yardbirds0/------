@@ -1,0 +1,71 @@
+{
+  "version": "1.0",
+  "_security_warning": "API keys are stored in plain text. Protect this file's permissions.",
+  "current_provider": "google",
+  "current_model": "gemini-2.5-flash-preview-09-2025",
+  "providers": [
+    {
+      "id": "google",
+      "name": "Google",
+      "icon": "google.png",
+      "enabled": true,
+      "api_key": "UFXLzCFM2BtvfvAc1ZC5zRkJLPJKvFlKeBKYfI5evJNqMO7t",
+      "api_url": "https://api.kkyyxx.xyz/v1",
+      "website": "https://ai.google.dev",
+      "models": [
+        {
+          "id": "gemini-2.5-flash-preview-09-2025",
+          "name": "gemini-2.5-flash-preview-09-2025",
+          "category": "Gemini",
+          "context_length": 8192,
+          "max_tokens": 4096,
+          "custom": true
+        },
+        {
+          "id": "gemini-2.5-pro",
+          "name": "gemini-2.5-pro",
+          "category": "Gemini",
+          "context_length": 8192,
+          "max_tokens": 4096,
+          "custom": true
+        }
+      ],
+      "order": 1
+    },
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "icon": "openai.png",
+      "enabled": false,
+      "api_key": "",
+      "api_url": "https://api.openai.com/v1",
+      "models": [],
+      "order": 2
+    },
+    {
+      "id": "siliconflow",
+      "name": "硅基流动",
+      "icon": "siliconflow.png",
+      "enabled": false,
+      "api_key": "test_key_12345",
+      "api_url": "https://test.api.com",
+      "models": [
+        {
+          "id": "Qwen/Qwen2.5-7B-Instruct",
+          "name": "Qwen2.5-7B-Instruct",
+          "category": "通用对话",
+          "context_length": 131072,
+          "max_tokens": 4096
+        },
+        {
+          "id": "Qwen/Qwen2.5-14B-Instruct",
+          "name": "Qwen2.5-14B-Instruct",
+          "category": "通用对话",
+          "context_length": 131072,
+          "max_tokens": 8192
+        }
+      ],
+      "order": 3
+    }
+  ]
+}

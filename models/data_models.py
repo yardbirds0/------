@@ -5,13 +5,180 @@
 定义系统中使用的所有核心数据结构，支持新的公式格式
 """
 
-from typing import Dict, List, Optional, Union, Any, Tuple
+from typing import Dict, List, Optional, Union, Any, Tuple, Literal
 from dataclasses import dataclass, field
 from enum import Enum
 import json
 import os
 from datetime import datetime
 import uuid
+
+from utils.excel_utils import convert_formula_to_new_format, build_formula_reference_simple
+
+
+@dataclass
+class PromptTemplate:
+    """提示词模板数据模型"""
+
+    group_name: str = "默认提示词"
+    title: str = ""
+    content: str = ""
+    updated_at: datetime = field(default_factory=datetime.now)
+
+    @property
+    def first_line(self) -> str:
+        """返回内容的第一行（去除首尾空白）"""
+        text = (self.content or "").strip()
+        if not text:
+            return ""
+        return text.splitlines()[0]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "group_name": self.group_name,
+            "title": self.title,
+            "content": self.content,
+            "updated_at": self.updated_at.isoformat(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "PromptTemplate":
+        if not data:
+            return cls()
+        updated_at = data.get("updated_at")
+        if isinstance(updated_at, str):
+            try:
+                updated_at = datetime.fromisoformat(updated_at)
+            except ValueError:
+                updated_at = datetime.now()
+        elif not isinstance(updated_at, datetime):
+            updated_at = datetime.now()
+
+        return cls(
+            group_name=data.get("group_name", "默认提示词"),
+            title=data.get("title", ""),
+            content=data.get("content", ""),
+            updated_at=updated_at,
+        )
+
+
+@dataclass
+class TokenUsageInfo:
+    """AI 调用的 Token 用量信息"""
+
+    prompt_tokens: Optional[int]
+    completion_tokens: Optional[int]
+    total_tokens: Optional[int]
+    status: Literal["complete", "missing"] = "complete"
+    recorded_at: datetime = field(default_factory=datetime.now)
+
+    PLACEHOLDER_TEXT = "无token用量数据"
+
+    @classmethod
+    def from_usage_payload(cls, payload: Optional[Dict[str, Any]]) -> "TokenUsageInfo":
+        """根据 OpenAI usage 字段创建实例。"""
+        if not payload:
+            return cls.missing()
+
+        def to_int(value: Any) -> Optional[int]:
+            if value is None:
+                return None
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        prompt = to_int(payload.get("prompt_tokens"))
+        completion = to_int(payload.get("completion_tokens"))
+        total = to_int(payload.get("total_tokens"))
+
+        if prompt is None and completion is None and total is None:
+            return cls.missing()
+
+        # 补全 total，如缺失则尝试从已知值计算
+        if total is None and prompt is not None and completion is not None:
+            total = prompt + completion
+
+        return cls(
+            prompt_tokens=prompt,
+            completion_tokens=completion,
+            total_tokens=total,
+            status="complete",
+        )
+
+    @classmethod
+    def from_metadata(cls, metadata: Optional[Dict[str, Any]]) -> "TokenUsageInfo":
+        if not metadata:
+            return cls.missing()
+
+        status = metadata.get("status", "complete")
+        prompt = metadata.get("prompt_tokens")
+        completion = metadata.get("completion_tokens")
+        total = metadata.get("total_tokens")
+        recorded_at = metadata.get("recorded_at")
+
+        if isinstance(recorded_at, str):
+            try:
+                recorded_at = datetime.fromisoformat(recorded_at)
+            except ValueError:
+                recorded_at = datetime.now()
+        elif not isinstance(recorded_at, datetime):
+            recorded_at = datetime.now()
+
+        def to_int(value: Any) -> Optional[int]:
+            if value is None:
+                return None
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        info = cls(
+            prompt_tokens=to_int(prompt),
+            completion_tokens=to_int(completion),
+            total_tokens=to_int(total),
+            status="complete" if status == "complete" else "missing",
+            recorded_at=recorded_at,
+        )
+
+        if info.status != "complete" or not info.has_all_tokens:
+            return cls.missing()
+        return info
+
+    @classmethod
+    def missing(cls) -> "TokenUsageInfo":
+        return cls(
+            prompt_tokens=None,
+            completion_tokens=None,
+            total_tokens=None,
+            status="missing",
+        )
+
+    @property
+    def has_all_tokens(self) -> bool:
+        return (
+            self.prompt_tokens is not None
+            and self.completion_tokens is not None
+            and self.total_tokens is not None
+        )
+
+    def as_text(self) -> str:
+        if self.status != "complete" or not self.has_all_tokens:
+            return self.PLACEHOLDER_TEXT
+        return (
+            f"输入：{self.prompt_tokens}；"
+            f"输出：{self.completion_tokens}，"
+            f"总：{self.total_tokens}"
+        )
+
+    def to_metadata(self) -> Dict[str, Any]:
+        return {
+            "status": self.status,
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "total_tokens": self.total_tokens,
+            "recorded_at": self.recorded_at.isoformat(),
+        }
 
 
 class SheetType(Enum):
@@ -71,6 +238,7 @@ class TargetItem:
     # 元数据
     extracted_time: datetime = field(default_factory=datetime.now)
     notes: str = ""  # 备注信息
+    columns: Dict[str, 'TargetColumnEntry'] = field(default_factory=dict)  # 目标项列信息
 
     def __post_init__(self):
         if not self.id:
@@ -163,7 +331,7 @@ class SourceItem:
 
     def to_reference_string(self) -> str:
         """生成新格式的引用字符串"""
-        return f'[{self.sheet_name}:"{self.name}"]({self.cell_address})'
+        return build_formula_reference_simple(self.sheet_name, self.cell_address)
 
     def to_display_dict(self) -> Dict[str, Any]:
         """转换为显示用的字典"""
@@ -184,11 +352,46 @@ class SourceItem:
 
 
 @dataclass
+class TargetColumnEntry:
+    """目标项列定义"""
+
+    key: str
+    display_name: str
+    column_index: int
+    column_letter: str
+    is_numeric: bool = False
+    data_type: str = "unknown"
+    header_text: str = ""
+    is_data_column: bool = True
+    cell_address: str = ""
+    source_value: Any = None
+    is_placeholder: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "key": self.key,
+            "display_name": self.display_name,
+            "column_index": self.column_index,
+            "column_letter": self.column_letter,
+            "is_numeric": self.is_numeric,
+            "data_type": self.data_type,
+            "header_text": self.header_text,
+            "is_data_column": self.is_data_column,
+            "cell_address": self.cell_address,
+            "source_value": self.source_value,
+            "is_placeholder": self.is_placeholder,
+        }
+
+
+@dataclass
 class MappingFormula:
-    """映射公式数据模型"""
+    """映射公式数据模型（支持多列）"""
 
     target_id: str  # 关联的目标项ID
-    formula: str  # 公式内容（新格式）
+    column_key: str = "__default__"  # 列键
+    column_name: str = ""  # 列名称
+    formula: str = ""  # 公式内容（新格式）
+    constant_value: Optional[Union[int, float, str]] = None  # 固定值映射
     status: FormulaStatus = FormulaStatus.EMPTY
 
     # 计算结果
@@ -211,13 +414,27 @@ class MappingFormula:
     version: int = 1  # 版本号
     notes: str = ""
 
-    def update_formula(self, new_formula: str, status: FormulaStatus = FormulaStatus.USER_MODIFIED):
+    def update_formula(
+        self,
+        new_formula: str,
+        status: FormulaStatus = FormulaStatus.USER_MODIFIED,
+        column_name: Optional[str] = None,
+    ):
         """更新公式"""
-        self.formula = new_formula
+        self.formula = convert_formula_to_new_format(new_formula)
         self.status = status
         self.modified_time = datetime.now()
         self.version += 1
         self.is_valid = False  # 需要重新验证
+        if column_name:
+            self.column_name = column_name
+        if new_formula.strip():
+            self.constant_value = None
+
+    def __post_init__(self):
+        self.formula = convert_formula_to_new_format(self.formula)
+        if not self.column_key:
+            self.column_key = "__default__"
 
     def set_calculation_result(self, result: Union[int, float], calculation_time: float = 0.0):
         """设置计算结果"""
@@ -262,18 +479,25 @@ class WorksheetInfo:
 class WorkbookManager:
     """工作簿管理器 - 管理整个工作簿的数据"""
 
-    file_path: str  # Excel文件路径
+    file_path: str = ""  # Excel文件路径
 
     # 工作表信息
     worksheets: Dict[str, WorksheetInfo] = field(default_factory=dict)
     flash_report_sheets: List[str] = field(default_factory=list)
     data_source_sheets: List[str] = field(default_factory=list)
+    source_sheet_columns: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
+    target_sheet_columns: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
+    source_sheet_header_rows: Dict[str, int] = field(default_factory=dict)
+    target_sheet_header_rows: Dict[str, int] = field(default_factory=dict)
 
     # 数据项
     target_items: Dict[str, TargetItem] = field(default_factory=dict)
     source_items: Dict[str, SourceItem] = field(default_factory=dict)
-    mapping_formulas: Dict[str, MappingFormula] = field(default_factory=dict)
-    calculation_results: Dict[str, 'CalculationResult'] = field(default_factory=dict)
+    mapping_formulas: Dict[str, Dict[str, MappingFormula]] = field(default_factory=dict)
+    calculation_results: Dict[str, Dict[str, 'CalculationResult']] = field(default_factory=dict)
+
+    # 列配置（按工作表名存储）
+    column_configs: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
 
     # 统计信息
     total_target_items: int = 0
@@ -295,6 +519,28 @@ class WorkbookManager:
         if self.file_path:
             return os.path.basename(self.file_path)
         return ""
+
+    @file_name.setter
+    def file_name(self, value: str):
+        self.file_path = value or ""
+
+    @property
+    def flash_reports(self) -> List[str]:
+        """兼容旧字段名，返回快报表列表"""
+        return self.flash_report_sheets
+
+    @flash_reports.setter
+    def flash_reports(self, sheets: List[str]):
+        self.flash_report_sheets = list(sheets or [])
+
+    @property
+    def data_sources(self) -> List[str]:
+        """兼容旧字段名，返回数据来源表列表"""
+        return self.data_source_sheets
+
+    @data_sources.setter
+    def data_sources(self, sheets: List[str]):
+        self.data_source_sheets = list(sheets or [])
 
     def add_worksheet(self, name: str, sheet_type: SheetType) -> WorksheetInfo:
         """添加工作表信息"""
@@ -330,8 +576,80 @@ class WorkbookManager:
 
     def add_mapping_formula(self, target_id: str, formula: MappingFormula):
         """添加映射公式"""
-        self.mapping_formulas[target_id] = formula
-        self.total_formulas = len(self.mapping_formulas)
+        existing = self.mapping_formulas.get(target_id)
+        if isinstance(existing, MappingFormula):
+            existing = {existing.column_key or "__default__": existing}
+            self.mapping_formulas[target_id] = existing
+        target_map = self.mapping_formulas.setdefault(target_id, {})
+        column_key = formula.column_key or "__default__"
+        target_map[column_key] = formula
+        self.total_formulas = sum(len(columns) for columns in self.mapping_formulas.values())
+
+    def get_mapping(self, target_id: str, column_key: Optional[str] = None) -> Optional[MappingFormula]:
+        """获取指定目标项与列的映射公式"""
+        key = column_key or "__default__"
+        existing = self.mapping_formulas.get(target_id)
+        if isinstance(existing, MappingFormula):
+            return existing if (existing.column_key or "__default__") == key else None
+        return (existing or {}).get(key) if existing else None
+
+    def ensure_mapping(
+        self,
+        target_id: str,
+        column_key: str,
+        column_name: str = "",
+    ) -> MappingFormula:
+        """确保目标项列映射存在，不存在则创建"""
+        existing = self.mapping_formulas.get(target_id)
+        if isinstance(existing, MappingFormula):
+            existing = {existing.column_key or "__default__": existing}
+            self.mapping_formulas[target_id] = existing
+        target_map = self.mapping_formulas.setdefault(target_id, {})
+        mapping = target_map.get(column_key)
+        if not mapping:
+            mapping = MappingFormula(
+                target_id=target_id,
+                column_key=column_key,
+                column_name=column_name,
+            )
+            target_map[column_key] = mapping
+            self.total_formulas = sum(len(columns) for columns in self.mapping_formulas.values())
+        elif column_name and not mapping.column_name:
+            mapping.column_name = column_name
+        return mapping
+
+    def remove_mapping(self, target_id: str, column_key: Optional[str] = None):
+        """移除映射公式"""
+        if target_id not in self.mapping_formulas:
+            return
+        if column_key is None:
+            removed = self.mapping_formulas.pop(target_id, None)
+            if removed:
+                self.total_formulas = sum(len(columns) for columns in self.mapping_formulas.values())
+            self.calculation_results.pop(target_id, None)
+            return
+
+        target_map = self.mapping_formulas.get(target_id)
+        if isinstance(target_map, MappingFormula):
+            if (target_map.column_key or "__default__") == column_key:
+                self.mapping_formulas.pop(target_id, None)
+                self.calculation_results.pop(target_id, None)
+                self.total_formulas = sum(len(columns) for columns in self.mapping_formulas.values())
+            return
+        target_map = target_map or {}
+        if column_key in target_map:
+            del target_map[column_key]
+            if not target_map:
+                self.mapping_formulas.pop(target_id, None)
+                self.calculation_results.pop(target_id, None)
+            self.total_formulas = sum(len(columns) for columns in self.mapping_formulas.values())
+
+    def iter_mappings(self, target_id: str) -> List[MappingFormula]:
+        """遍历目标项的所有映射"""
+        existing = self.mapping_formulas.get(target_id)
+        if isinstance(existing, MappingFormula):
+            return [existing]
+        return list((existing or {}).values())
 
     def get_target_children(self, target_id: str) -> List[TargetItem]:
         """获取目标项的子项"""
@@ -371,8 +689,9 @@ class WorkbookManager:
         """获取公式统计信息"""
         stats = {status.value: 0 for status in FormulaStatus}
 
-        for formula in self.mapping_formulas.values():
-            stats[formula.status.value] += 1
+        for formula_map in self.mapping_formulas.values():
+            for formula in formula_map.values():
+                stats[formula.status.value] += 1
 
         return stats
 
@@ -414,7 +733,8 @@ class WorkbookManager:
                 "level": item.level,
                 "target_cell_address": item.target_cell_address,
                 "is_empty_target": item.is_empty_target,
-                "notes": item.notes
+                "notes": item.notes,
+                "columns": {key: column.to_dict() for key, column in item.columns.items()}
             } for tid, item in self.target_items.items()},
 
             "source_items": {sid: {
@@ -427,17 +747,26 @@ class WorkbookManager:
                 "notes": item.notes
             } for sid, item in self.source_items.items()},
 
-            "mapping_formulas": {tid: {
-                "target_id": formula.target_id,
-                "formula": formula.formula,
-                "status": formula.status.value,
-                "calculation_result": formula.calculation_result,
-                "is_valid": formula.is_valid,
-                "validation_error": formula.validation_error,
-                "ai_confidence": formula.ai_confidence,
-                "version": formula.version,
-                "notes": formula.notes
-            } for tid, formula in self.mapping_formulas.items()}
+            "mapping_formulas": {
+                tid: {
+                    column_key: {
+                        "target_id": formula.target_id,
+                        "column_key": formula.column_key,
+                        "column_name": formula.column_name,
+                        "formula": formula.formula,
+                        "constant_value": formula.constant_value,
+                        "status": formula.status.value,
+                        "calculation_result": formula.calculation_result,
+                        "is_valid": formula.is_valid,
+                        "validation_error": formula.validation_error,
+                        "ai_confidence": formula.ai_confidence,
+                        "version": formula.version,
+                        "notes": formula.notes
+                    }
+                    for column_key, formula in column_map.items()
+                }
+                for tid, column_map in self.mapping_formulas.items()
+            }
         }
 
         return json.dumps(data, ensure_ascii=False, indent=2)
@@ -449,6 +778,8 @@ class CalculationResult:
 
     target_id: str  # 目标项ID
     success: bool  # 是否成功
+    column_key: str = "__default__"  # 列键
+    column_name: str = ""
     result: Optional[Union[int, float]] = None  # 计算结果
     error_message: str = ""  # 错误信息
     calculation_time: float = 0.0  # 计算耗时（毫秒）
@@ -753,7 +1084,10 @@ def generate_hierarchical_numbers(target_items: List[TargetItem]) -> List[Target
     """
     为已计算层级关系的目标项生成层级编号
 
-    基于hierarchical_level生成如1、1.1、1.1.1、2、2.1格式的编号
+    增强逻辑：
+    1. 识别连续编号模式（如"其中:1.", "2.", "3."应该是同级）
+    2. 防止级别跳跃（避免从3直接到3.1.1）
+    3. 优先使用原始编号，但要结合上下文判断
 
     Args:
         target_items: 已计算层级关系的目标项列表
@@ -779,28 +1113,182 @@ def generate_hierarchical_numbers(target_items: List[TargetItem]) -> List[Target
         # 层级计数器：每个层级维护一个计数器
         level_counters = {}
 
+        # 上下文追踪
+        prev_item = None
+        prev_had_qizhong_pattern = False  # 上一项是否是"其中:数字."模式
+
         for item in sheet_items:
             level = item.hierarchical_level
+            original_num = item.display_index  # 从Excel提取的原始编号
+            original_text = item.original_text or ""
+
+            # 检测"其中:"模式
+            has_qizhong = "其中:" in original_text or "其中" in original_text
+
+            # 检测"其中:数字."模式（如"其中:1."）
+            qizhong_number_match = None
+            if has_qizhong:
+                import re
+                # 匹配"其中:1."、"其中：2."等模式
+                match = re.search(r'其中[:：]\s*(\d+)\.', original_text)
+                if match:
+                    qizhong_number_match = match.group(1)
+
+            # 检查是否是连续编号的一部分
+            is_sequential_number = False
+            sequential_target_level = None
+
+            if original_num and original_num.strip().rstrip('.').isdigit():
+                current_num = int(original_num.strip().rstrip('.'))
+
+                # 策略1：查找level_counters中是否有某个层级的值是current_num-1
+                # 但仅当当前项不是明显的一级项目时（有缩进或"其中:"）
+                if level > 1 or has_qizhong:  # 不是一级项目，才尝试连续编号检测
+                    for check_level in sorted(level_counters.keys(), reverse=True):
+                        if level_counters[check_level] == current_num - 1:
+                            # 找到了连续编号！
+                            is_sequential_number = True
+                            sequential_target_level = check_level
+                            break
+
+                # 策略2：如果前一项有"其中:"模式，且缩进相近，也算连续
+                if not is_sequential_number and prev_had_qizhong_pattern and prev_item:
+                    if abs(item.level - prev_item.level) <= 1:
+                        is_sequential_number = True
+                        sequential_target_level = len(prev_item.hierarchical_number.split('.'))
+
+            # 防止级别跳跃：限制最大增幅为1
+            if prev_item:
+                max_allowed_level = prev_item.hierarchical_level + 1
+                if level > max_allowed_level:
+                    level = max_allowed_level
+                    item.hierarchical_level = level  # 更新项目的层级
 
             # 重置更深层级的计数器
             levels_to_reset = [k for k in level_counters.keys() if k > level]
             for reset_level in levels_to_reset:
                 del level_counters[reset_level]
 
-            # 增加当前层级的计数器
-            if level not in level_counters:
-                level_counters[level] = 0
-            level_counters[level] += 1
+            # ========== 编号生成逻辑 ==========
 
-            # 生成层级编号
-            number_parts = []
-            for i in range(1, level + 1):
-                if i in level_counters:
-                    number_parts.append(str(level_counters[i]))
+            # 情况1：连续编号（如"其中:1."后的"2.", "3."）
+            if is_sequential_number and sequential_target_level:
+                current_num = int(original_num.strip().rstrip('.'))
+
+                # 根据目标层级构建编号
+                parent_parts = []
+                for i in range(1, sequential_target_level):
+                    if i in level_counters:
+                        parent_parts.append(str(level_counters[i]))
+                    else:
+                        parent_parts.append("1")
+
+                # 更新当前层级的计数器
+                level_counters[sequential_target_level] = current_num
+
+                # 组合编号
+                number_parts = parent_parts + [str(current_num)]
+                item.hierarchical_number = ".".join(number_parts)
+
+                # 更新项目的层级为实际层级
+                item.hierarchical_level = sequential_target_level
+
+                # 记录这是连续编号的一部分
+                prev_had_qizhong_pattern = False  # 重置
+                prev_item = item
+                continue
+
+            # 情况2：有原始编号
+            if original_num and original_num.strip():
+                original_clean = original_num.strip()
+
+                # 情况2a：纯数字（如"3"、"3."）- 可能是一级项目
+                if original_clean.rstrip('.').isdigit():
+                    num_value = original_clean.rstrip('.')
+
+                    # 检查是否真的是一级项目
+                    # 如果有"其中:"且前面已有一级项目，可能是二级
+                    if has_qizhong and 1 in level_counters:
+                        # 这是"其中:1."这样的模式，是二级项目
+                        parent_num = level_counters.get(1, 1)
+                        item.hierarchical_number = f"{parent_num}.{num_value}"
+                        level_counters[2] = int(num_value)
+                        level_counters[level] = int(num_value)
+
+                        # 标记这是"其中:数字."模式
+                        prev_had_qizhong_pattern = True
+                    else:
+                        # 这是真正的一级项目
+                        item.hierarchical_number = num_value
+                        level_counters[1] = int(num_value)
+                        # 重置所有更深层级
+                        for k in list(level_counters.keys()):
+                            if k > 1:
+                                del level_counters[k]
+                        prev_had_qizhong_pattern = False
+
+                    prev_item = item
+                    continue
+
+                # 情况2b：多级编号（如"2.1"、"1.2.3"）
+                if '.' in original_clean:
+                    parts = original_clean.strip('.').split('.')
+                    if all(p.isdigit() for p in parts if p):
+                        item.hierarchical_number = '.'.join(parts)
+                        # 更新对应层级的计数器
+                        for idx, part in enumerate(parts, start=1):
+                            level_counters[idx] = int(part)
+                        prev_had_qizhong_pattern = False
+                        prev_item = item
+                        continue
+
+            # 情况3：检测"其中:数字."模式（即使没有 display_index）
+            if qizhong_number_match:
+                # 找到了"其中:1."这样的模式
+                num_value = qizhong_number_match
+                parent_num = level_counters.get(1, 1)
+                item.hierarchical_number = f"{parent_num}.{num_value}"
+                level_counters[2] = int(num_value)
+
+                # 更新项目的层级为2级
+                item.hierarchical_level = 2
+
+                # 标记这是"其中:数字."模式
+                prev_had_qizhong_pattern = True
+                prev_item = item
+                continue
+
+            # 情况4：无原始编号，使用自动生成
+            if level == 1:
+                # 一级项目
+                if 1 not in level_counters:
+                    level_counters[1] = 0
+                level_counters[1] += 1
+                item.hierarchical_number = str(level_counters[1])
+
+                # 检查是否包含"其中:"
+                if has_qizhong:
+                    prev_had_qizhong_pattern = True
                 else:
-                    number_parts.append("1")
+                    prev_had_qizhong_pattern = False
+            else:
+                # 多级项目
+                parent_parts = []
+                for i in range(1, level):
+                    if i in level_counters:
+                        parent_parts.append(str(level_counters[i]))
+                    else:
+                        parent_parts.append("1")
 
-            item.hierarchical_number = ".".join(number_parts)
+                if level not in level_counters:
+                    level_counters[level] = 0
+                level_counters[level] += 1
+                number_parts = parent_parts + [str(level_counters[level])]
+                item.hierarchical_number = ".".join(number_parts)
+
+                prev_had_qizhong_pattern = False
+
+            prev_item = item
 
     return target_items
 

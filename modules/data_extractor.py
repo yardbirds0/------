@@ -15,7 +15,12 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.data_models import (
-    WorkbookManager, TargetItem, SourceItem, SheetType, update_hierarchy_structure
+    WorkbookManager,
+    TargetItem,
+    SourceItem,
+    SheetType,
+    update_hierarchy_structure,
+    TargetColumnEntry,
 )
 from modules.table_schema_analyzer import TableSchemaAnalyzer, TableType, TableSchema
 from utils.column_detector import ColumnDetector
@@ -29,6 +34,7 @@ class DataExtractor:
         self.workbook = None
         self.schema_analyzer = TableSchemaAnalyzer()
         self.column_detector = ColumnDetector()
+        self.sheet_column_map: Dict[str, Dict[int, Dict[str, Any]]] = {}
 
         # 加载表格规则
         self.table_rules = self._load_table_rules()
@@ -94,6 +100,9 @@ class DataExtractor:
         """提取快报表目标项（保持原有逻辑）"""
         target_count = 0
 
+        # 重置目标列元数据
+        self.workbook_manager.target_sheet_columns = {}
+
         for sheet_item in self.workbook_manager.flash_report_sheets:
             sheet_name = self._get_sheet_name(sheet_item)
             print(f"\n提取快报表 '{sheet_name}' 的目标项...")
@@ -103,7 +112,13 @@ class DataExtractor:
                 continue
 
             sheet = self.workbook[sheet_name]
-            sheet_targets = self._extract_targets_from_sheet(sheet, sheet_name)
+
+            table_schema = self.schema_analyzer.analyze_table_schema(sheet)
+            print(f"  表头起始行: {table_schema.header_start_row}, 列头行数: {table_schema.header_rows}")
+
+            target_column_map = self._register_sheet_columns(sheet_name, table_schema, registry='target')
+
+            sheet_targets = self._extract_targets_from_sheet(sheet, sheet_name, table_schema, target_column_map)
             target_count += len(sheet_targets)
             print(f"  提取到 {len(sheet_targets)} 个目标项")
 
@@ -116,6 +131,10 @@ class DataExtractor:
     def _extract_data_source_items_enhanced(self) -> int:
         """提取数据源项（增强版）"""
         source_count = 0
+
+        # 重置列元数据
+        self.workbook_manager.source_sheet_columns = {}
+        self.sheet_column_map = {}
 
         for sheet_item in self.workbook_manager.data_source_sheets:
             sheet_name = self._get_sheet_name(sheet_item)
@@ -131,6 +150,7 @@ class DataExtractor:
             print(f"  分析表格模式...")
             table_schema = self.schema_analyzer.analyze_table_schema(sheet)
             print(f"  识别为: {table_schema.table_type.value}")
+            self._register_sheet_columns(sheet_name, table_schema)
 
             # 根据表格类型使用不同的提取策略
             if table_schema.table_type == TableType.TRIAL_BALANCE:
@@ -177,21 +197,38 @@ class DataExtractor:
             hierarchy_level = self._calculate_account_level(account_code)
 
             # 提取所有数据列的值
-            data_columns = {}
-            main_value = None
+            data_columns: Dict[str, Any] = {}
+            column_details: Dict[str, Dict[str, Any]] = {}
+            main_value: Optional[float] = None
+            column_map = self.sheet_column_map.get(sheet_name, {})
 
             for col_info in schema.data_columns:
-                if col_info.is_numeric:
-                    cell = sheet.cell(row=row_num, column=col_info.column_index)
-                    if self._is_data_cell(cell):
-                        value = self._extract_cell_value(cell)
-                        # 生成更清晰的列键名
-                        column_key = self._generate_column_key(col_info, sheet_name)
-                        data_columns[column_key] = value
+                meta = column_map.get(col_info.column_index)
+                if not meta:
+                    continue
 
-                        # 第一个有效数值作为主要数值
-                        if main_value is None:
-                            main_value = value
+                cell = sheet.cell(row=row_num, column=col_info.column_index)
+                value: Optional[Any] = None
+
+                # 先尝试提取数值
+                if meta.get("is_data_column") and self._is_data_cell(cell):
+                    value = self._extract_cell_value(cell)
+
+                # 如果没有数值，尝试提取文本（确保文本列也能被提取）
+                if value is None or value == "":
+                    text_value = self._extract_text_value(cell)
+                    if text_value and text_value.strip():
+                        value = text_value
+
+                if value is None or value == "":
+                    continue
+
+                display_name = meta.get("display_name") or self._generate_column_key(col_info, sheet_name)
+                data_columns[display_name] = value
+                column_details[display_name] = meta
+
+                if meta.get("is_data_column") and main_value is None and isinstance(value, (int, float)):
+                    main_value = float(value)
 
             # 只有找到有效数据才创建来源项
             if data_columns:
@@ -205,6 +242,7 @@ class DataExtractor:
                     main_value=main_value,
                     table_type="trial_balance"
                 )
+                source.column_info.update(column_details)
                 sources.append(source)
 
         print(f"    科目余额表提取完成，共 {len(sources)} 个项目")
@@ -232,20 +270,38 @@ class DataExtractor:
                 continue
 
             # 提取所有数据列
-            data_columns = {}
-            main_value = None
+            data_columns: Dict[str, Any] = {}
+            column_details: Dict[str, Dict[str, Any]] = {}
+            main_value: Optional[float] = None
+            column_map = self.sheet_column_map.get(sheet_name, {})
 
             for col_info in schema.data_columns:
-                if col_info.is_numeric:
-                    cell = sheet.cell(row=row_num, column=col_info.column_index)
-                    if self._is_data_cell(cell):
-                        value = self._extract_cell_value(cell)
-                        # 生成更清晰的列键名
-                        column_key = self._generate_column_key(col_info, sheet_name)
-                        data_columns[column_key] = value
+                meta = column_map.get(col_info.column_index)
+                if not meta:
+                    continue
 
-                        if main_value is None:
-                            main_value = value
+                cell = sheet.cell(row=row_num, column=col_info.column_index)
+                value: Optional[Any] = None
+
+                # 先尝试提取数值
+                if meta.get("is_data_column") and self._is_data_cell(cell):
+                    value = self._extract_cell_value(cell)
+
+                # 如果没有数值，尝试提取文本（确保文本列也能被提取）
+                if value is None or value == "":
+                    text_value = self._extract_text_value(cell)
+                    if text_value and text_value.strip():
+                        value = text_value
+
+                if value is None or value == "":
+                    continue
+
+                display_name = meta.get("display_name") or self._generate_column_key(col_info, sheet_name)
+                data_columns[display_name] = value
+                column_details[display_name] = meta
+
+                if meta.get("is_data_column") and main_value is None and isinstance(value, (int, float)):
+                    main_value = float(value)
 
             if data_columns:
                 source = self._create_enhanced_source_item(
@@ -258,6 +314,7 @@ class DataExtractor:
                     main_value=main_value,
                     table_type=schema.table_type.value
                 )
+                source.column_info.update(column_details)
                 sources.append(source)
 
         return sources
@@ -318,8 +375,8 @@ class DataExtractor:
             return 0
 
     def _create_enhanced_source_item(self, sheet_name: str, account_name: str, account_code: str,
-                                   row_num: int, hierarchy_level: int, data_columns: Dict[str, Any],
-                                   main_value: Any, table_type: str) -> SourceItem:
+                                     row_num: int, hierarchy_level: int, data_columns: Dict[str, Any],
+                                     main_value: Any, table_type: str) -> SourceItem:
         """创建增强的来源项"""
 
         # 生成唯一ID
@@ -329,7 +386,7 @@ class DataExtractor:
         source = SourceItem(
             id=source_id,
             sheet_name=sheet_name,
-            name=account_name,
+            name=account_name,  # ⭐ 保留原始值（包括空格），用于UI显示
             cell_address=f"A{row_num}",  # 暂时使用A列
             row=row_num,
             column="A",
@@ -340,6 +397,9 @@ class DataExtractor:
             data_columns=data_columns
         )
 
+        # ⭐ 关键：将data_columns复制到values字典，用于三段式引用的验证和计算
+        source.values = dict(data_columns)  # 创建副本避免共享引用
+
         # 设置层级信息
         if account_code:
             parent_code = self._get_parent_account_code(account_code)
@@ -347,244 +407,96 @@ class DataExtractor:
 
         return source
 
-    def _generate_column_key(self, col_info, sheet_name: str = "") -> str:
-        """生成清晰的数据列键名（与TableColumnRules规则一致）"""
-        # 导入表列规则系统
-        from utils.table_column_rules import TableColumnRules
+    def _register_sheet_columns(
+        self,
+        sheet_name: str,
+        schema: TableSchema,
+        registry: str = 'source'
+    ) -> Dict[int, Dict[str, Any]]:
+        """注册工作表的列元数据供后续展示与配置使用"""
+        metadata_list: List[Dict[str, Any]] = []
+        column_map: Dict[int, Dict[str, Any]] = {}
 
-        # 获取主要列头文本
-        primary_header = col_info.primary_header.lower() if col_info.primary_header else ""
-        secondary_header = col_info.secondary_header.lower() if hasattr(col_info, 'secondary_header') and col_info.secondary_header else ""
+        used_keys: Dict[str, int] = {}
+        used_display: Dict[str, int] = {}
 
-        # 如果列头为空，尝试直接从Excel读取（修复关键问题）
-        if not primary_header and hasattr(self, 'workbook') and self.workbook:
-            try:
-                # 查找当前工作表
-                current_sheet = None
-                for ws_name in self.workbook.sheetnames:
-                    if ws_name == sheet_name:
-                        current_sheet = self.workbook[ws_name]
-                        break
+        for info in schema.data_columns:
+            base_key = info.normalized_key or f"col_{info.column_letter}"
+            key = base_key
+            if key in used_keys:
+                used_keys[key] += 1
+                key = f"{base_key}_{used_keys[base_key]}"
+            else:
+                used_keys[key] = 1
 
-                if current_sheet:
-                    # 尝试从第5行读取列头（根据利润表分析结果）
-                    header_cell = current_sheet.cell(row=5, column=col_info.column_index)
-                    if header_cell.value and str(header_cell.value).strip():
-                        primary_header = str(header_cell.value).strip().lower()
-            except Exception as e:
-                pass  # 静默处理错误
+            base_display = info.display_name or info.header_text or f"列{info.column_letter}"
+            display = base_display
+            if display in used_display:
+                used_display[display] += 1
+                display = f"{base_display} ({used_display[base_display]})"
+            else:
+                used_display[display] = 1
 
-        # 直接映射检查（优先处理，移到标准键匹配之前）
-        if sheet_name and "利润表" in sheet_name:
-            # 利润表列名映射
-            income_mapping = {
-                "本期金额": "本期金额",
-                "本期": "本期金额",
-                "上期金额": "上期金额",
-                "上期": "上期金额",  # 关键修复：映射"上期"到"上期金额"
-                "本年累计": "本年累计",
-                "上年累计": "上年累计"
+            meta_entry = {
+                "key": key,
+                "display_name": display,
+                "column_index": info.column_index,
+                "column_letter": info.column_letter,
+                "primary_header": info.primary_header,
+                "secondary_header": info.secondary_header,
+                "header_text": info.header_text,
+                "data_type": info.data_type,
+                "is_numeric": info.is_numeric,
+                "is_data_column": info.is_data_column,
+                "is_placeholder": info.is_placeholder,
+                "primary_col_span": info.primary_col_span,
+                "primary_row_span": info.primary_row_span,
+                "primary_is_group_start": info.primary_is_group_start,
+                "primary_start_column": info.primary_start_column or info.column_index,
+                "secondary_col_span": info.secondary_col_span,
+                "secondary_row_span": info.secondary_row_span,
+                "secondary_is_group_start": info.secondary_is_group_start,
+                "secondary_start_column": info.secondary_start_column or info.column_index,
+                "header_row_count": schema.header_rows
             }
-            for pattern, standard_key in income_mapping.items():
-                pattern_lower = pattern.lower()
-                # 精确匹配或包含匹配
-                if primary_header == pattern_lower or pattern_lower in primary_header or primary_header in pattern_lower:
-                    return standard_key
 
-        # 先检测当前工作表的表类型
-        if sheet_name:
-            table_type = TableColumnRules.detect_table_type(sheet_name)
-            if table_type:
-                # 获取该表类型的标准列键
-                standard_keys = TableColumnRules.get_ordered_column_keys(table_type)
+            metadata_list.append(meta_entry)
+            column_map[info.column_index] = meta_entry
 
-                # 尝试匹配到最合适的标准键
-                best_match = self._match_to_standard_key(primary_header, secondary_header, standard_keys)
-                if best_match:
-                    return best_match
-
-        if sheet_name and "资产负债表" in sheet_name:
-            # 资产负债表列名映射
-            balance_sheet_mapping = {
-                "期末余额": "期末余额",
-                "期末": "期末余额",
-                "期末金额": "期末余额",
-                "年初余额": "年初余额",
-                "年初": "年初余额",
-                "年初金额": "年初余额",
-            }
-            for pattern, standard_key in balance_sheet_mapping.items():
-                if pattern.lower() in primary_header or primary_header in pattern.lower():
-                    return standard_key
-
-        if sheet_name and "现金流量表" in sheet_name:
-            # 现金流量表列名映射
-            cashflow_mapping = {
-                "本期金额": "本期金额",
-                "本期": "本期金额",
-                "上期金额": "上期金额",
-                "上期": "上期金额",
-            }
-            for pattern, standard_key in cashflow_mapping.items():
-                if pattern.lower() in primary_header or primary_header in pattern.lower():
-                    return standard_key
-
-        # 详细的映射规则（作为备选方案）
-        # 标准化科目余额表列名映射
-        trial_balance_mapping = {
-            # 年初余额相关
-            "年初余额": {
-                "借方": "年初余额_借方",
-                "贷方": "年初余额_贷方",
-                "合计": "年初余额_合计",
-                "": "年初余额_合计"
-            },
-            # 期初余额相关
-            "期初余额": {
-                "借方": "期初余额_借方",
-                "贷方": "期初余额_贷方",
-                "合计": "期初余额_合计",
-                "": "期初余额_合计"
-            },
-            # 本期发生额相关
-            "本期发生额": {
-                "借方": "本期发生额_借方",
-                "贷方": "本期发生额_贷方",
-                "合计": "本期发生额_合计",
-                "": "本期发生额_合计"
-            },
-            # 期末余额相关
-            "期末余额": {
-                "借方": "期末余额_借方",
-                "贷方": "期末余额_贷方",
-                "合计": "期末余额_合计",
-                "": "期末余额_合计"
-            }
-        }
-
-        # 资产负债表列名映射
-        balance_sheet_mapping = {
-            "期末余额": "期末余额",
-            "期末": "期末余额",
-            "期末金额": "期末余额",
-            "年初余额": "年初余额",
-            "年初": "年初余额",
-            "年初金额": "年初余额",
-        }
-
-        # 利润表列名映射
-        income_mapping = {
-            "本期金额": "本期金额",
-            "本期": "本期金额",
-            "上期金额": "上期金额",
-            "上期": "上期金额",  # 关键修复：映射"上期"到"上期金额"
-            "本年累计": "本年累计",
-            "上年累计": "上年累计"
-        }
-
-        # 现金流量表列名映射
-        cashflow_mapping = {
-            "本期金额": "本期金额",
-            "本期": "本期金额",
-            "上期金额": "上期金额",
-            "上期": "上期金额",
-        }
-
-        # 检查科目余额表模式
-        for period_key, direction_map in trial_balance_mapping.items():
-            if period_key in primary_header:
-                # 确定借贷方向
-                direction = ""
-                if "借方" in secondary_header or "借" in secondary_header:
-                    direction = "借方"
-                elif "贷方" in secondary_header or "贷" in secondary_header:
-                    direction = "贷方"
-                elif "合计" in secondary_header or secondary_header == "":
-                    direction = "合计"
-                else:
-                    # 根据数据类型判断
-                    if hasattr(col_info, 'data_type') and col_info.data_type:
-                        if col_info.data_type == 'debit':
-                            direction = "借方"
-                        elif col_info.data_type == 'credit':
-                            direction = "贷方"
-
-                if direction in direction_map:
-                    return direction_map[direction]
-
-        # 检查资产负债表模式
-        for pattern, standard_key in balance_sheet_mapping.items():
-            if pattern in primary_header:
-                return standard_key
-
-        # 检查利润表模式（优先处理）
-        for pattern, standard_key in income_mapping.items():
-            if pattern in primary_header:
-                return standard_key
-
-        # 检查现金流量表模式
-        for pattern, standard_key in cashflow_mapping.items():
-            if pattern in primary_header:
-                return standard_key
-
-        # 降级到原有逻辑
-        if primary_header:
-            base_name = primary_header.replace(" ", "_").replace(":", "")
+        if registry == 'target':
+            self.workbook_manager.target_sheet_columns[sheet_name] = metadata_list
+            self.workbook_manager.target_sheet_header_rows[sheet_name] = schema.header_rows
         else:
-            base_name = f"column_{col_info.column_index}"
+            self.workbook_manager.source_sheet_columns[sheet_name] = metadata_list
+            self.workbook_manager.source_sheet_header_rows[sheet_name] = schema.header_rows
+            self.sheet_column_map[sheet_name] = column_map
 
-        # 添加数据类型信息
-        if hasattr(col_info, 'data_type') and col_info.data_type not in ['unknown', '']:
-            if col_info.data_type in ['debit', 'credit']:
-                return f"{base_name}_{col_info.data_type}"
+        return column_map
 
-        # 检查二级列头
-        if hasattr(col_info, 'secondary_header') and col_info.secondary_header:
-            secondary = col_info.secondary_header.replace(" ", "_").replace(":", "")
-            return f"{base_name}_{secondary}"
+    def _extract_text_value(self, cell) -> Optional[Any]:
+        """提取文本或通用单元格内容"""
+        if cell.value is None:
+            return None
 
-        # 默认使用列索引区分
-        return f"{base_name}_{col_info.column_index}"
+        if isinstance(cell.value, str):
+            text = cell.value.strip()
+            return text if text else None
 
-    def _match_to_standard_key(self, primary_header: str, secondary_header: str, standard_keys: list) -> str:
-        """匹配到最合适的标准键名"""
-        # 创建候选匹配列表
-        candidates = []
+        return cell.value
 
-        for key in standard_keys:
-            score = 0
-            key_lower = key.lower()
+    def _generate_column_key(self, col_info, sheet_name: str = "") -> str:
+        """生成清晰的数据列键名（使用动态列头信息）"""
+        meta = self.sheet_column_map.get(sheet_name, {}).get(col_info.column_index)
+        if meta:
+            return meta.get("display_name") or meta.get("key") or meta.get("header_text")
 
-            # 检查主要列头匹配
-            if primary_header in key_lower:
-                score += 10
-            elif any(word in key_lower for word in primary_header.split()):
-                score += 5
+        if getattr(col_info, 'display_name', None):
+            return col_info.display_name
 
-            # 检查二级列头匹配
-            if secondary_header:
-                if secondary_header in key_lower:
-                    score += 10
-                elif any(word in key_lower for word in secondary_header.split()):
-                    score += 5
+        if getattr(col_info, 'normalized_key', None):
+            return col_info.normalized_key
 
-            # 特殊匹配规则
-            if "借" in secondary_header and "借方" in key_lower:
-                score += 8
-            elif "贷" in secondary_header and "贷方" in key_lower:
-                score += 8
-            elif "合计" in secondary_header and "合计" in key_lower:
-                score += 8
-
-            if score > 0:
-                candidates.append((key, score))
-
-        # 返回得分最高的匹配
-        if candidates:
-            candidates.sort(key=lambda x: x[1], reverse=True)
-            return candidates[0][0]
-
-        return None
+        return f"列{col_info.column_letter}"
 
     def _get_parent_account_code(self, account_code: str) -> str:
         """获取父级科目代码"""
@@ -601,64 +513,180 @@ class DataExtractor:
 
         return ""
 
-    def _extract_targets_from_sheet(self, sheet, sheet_name: str) -> List[TargetItem]:
-        """从快报表中提取目标项（保持原有逻辑）"""
-        targets = []
-        max_row = sheet.max_row or 500  # 增加快报表扫描范围
+    def _extract_targets_from_sheet(
+        self,
+        sheet,
+        sheet_name: str,
+        schema: TableSchema,
+        column_map: Dict[int, Dict[str, Any]]
+    ) -> List[TargetItem]:
+        """从快报表中提取目标项（增强版）"""
+        targets: List[TargetItem] = []
+        max_row = sheet.max_row or (schema.data_start_row + 500)
 
-        for row_num in range(1, max_row + 1):
-            cell_a = sheet.cell(row=row_num, column=1)
-            if cell_a.value and str(cell_a.value).rstrip():
-                text = str(cell_a.value).rstrip()  # 保留前导缩进
+        name_columns = schema.name_columns or [1]
+        data_start = schema.data_start_row or (schema.header_start_row + schema.header_rows)
 
-                # 跳过明显的标题行
-                if any(keyword in text for keyword in ['项目', '金额', '单位', '期间']):
+        for row_num in range(data_start, max_row + 1):
+            item_text = None
+            for name_col in name_columns:
+                if name_col <= 0 or name_col > sheet.max_column:
                     continue
+                cell = sheet.cell(row=row_num, column=name_col)
+                if cell.value and str(cell.value).rstrip():
+                    item_text = str(cell.value).rstrip()
+                    break
 
-                # 分析项目文本
-                item_info = self._analyze_target_item_text(text)
-                if item_info:
-                    target = TargetItem(
-                        id=f"{sheet_name}_{row_num}",
-                        name=item_info['clean_name'],
-                        sheet_name=sheet_name,
-                        row=row_num,
-                        level=item_info['level'],
-                        hierarchical_level=item_info['level'],
-                        hierarchical_number=item_info['numbering'],
-                        original_text=text
-                    )
-                    targets.append(target)
+            if not item_text:
+                continue
+
+            # 跳过明显描述行
+            if any(keyword in item_text for keyword in ['项目', '金额', '单位', '期间']) and row_num <= schema.data_start_row:
+                continue
+
+            item_info = self._analyze_target_item_text(item_text)
+            if not item_info:
+                continue
+
+            target = TargetItem(
+                id=f"{sheet_name}_{row_num}",
+                name=item_info['clean_name'],
+                original_text=item_text,
+                sheet_name=sheet_name,
+                row=row_num,
+                level=item_info['level'],
+                hierarchical_level=item_info['level'],
+                hierarchical_number=item_info['numbering'],
+                display_index=item_info['numbering'],  # 设置原始编号
+            )
+
+            column_entries: Dict[str, TargetColumnEntry] = {}
+            default_cell = ""
+
+            for col_index, meta in column_map.items():
+                column_letter = meta.get("column_letter")
+                cell = sheet.cell(row=row_num, column=col_index)
+                value = cell.value
+                cell_address = f"{column_letter}{row_num}" if column_letter else ""
+
+                entry = TargetColumnEntry(
+                    key=meta.get("key"),
+                    display_name=meta.get("display_name"),
+                    column_index=col_index,
+                    column_letter=column_letter,
+                    is_numeric=meta.get("is_numeric", False),
+                    data_type=meta.get("data_type", "unknown"),
+                    header_text=meta.get("header_text", ""),
+                    is_data_column=meta.get("is_data_column", False),
+                    cell_address=cell_address,
+                    source_value=value,
+                    is_placeholder=meta.get("is_placeholder", False)
+                )
+                if entry.key:
+                    column_entries[entry.key] = entry
+                    if not default_cell and entry.is_data_column and cell_address:
+                        default_cell = cell_address
+
+            target.columns = column_entries
+            if default_cell:
+                target.target_cell_address = default_cell
+            elif column_entries:
+                first_entry = next(iter(column_entries.values()))
+                if first_entry.cell_address:
+                    target.target_cell_address = first_entry.cell_address
+
+            targets.append(target)
 
         return targets
 
     def _analyze_target_item_text(self, text: str) -> Optional[Dict]:
-        """分析目标项文本"""
+        """
+        分析目标项文本，识别层级关系
+
+        优先级：
+        1. 文字表述关系（"其中"、"减"、"加"等关键词）
+        2. 缩进关系（前导空格数量）
+        """
         if not text or len(text.strip()) < 2:
             return None
 
-        # 检测编号模式
+        # 1. 检测前导空格（缩进）
+        indent_count = len(text) - len(text.lstrip())
+
+        # 2. 检测层级关键词
+        # 一级关键词：表示顶级项目
+        level_1_keywords = ['一、', '二、', '三、', '四、', '五、', '六、', '七、', '八、', '九、', '十、']
+        level_1_patterns = [
+            r'^[一二三四五六七八九十]+、',  # 中文编号
+            r'^[（(]?[一二三四五六七八九十]+[)）]',  # 括号中文编号
+        ]
+
+        # 二级关键词：表示子项
+        level_2_keywords = ['其中：', '其中', '包括：', '包括', '含：', '含']
+
+        # 三级关键词：表示更细的子项
+        level_3_keywords = ['减：', '减', '加：', '加', '明细：', '明细', '细项：', '细项']
+
+        stripped_text = text.strip()
+
+        # 3. 检测编号模式
+        numbering = ''
+        clean_name = stripped_text
+
         numbering_patterns = [
-            r'^(\d+)\.\s*(.+)',
-            r'^(\d+)\s+(.+)',
-            r'^(\d+)、\s*(.+)',
-            r'^\((\d+)\)\s*(.+)',
+            r'^(\d+)\.\s*(.+)',  # "1. xxx"
+            r'^(\d+)\s+(.+)',    # "1 xxx"
+            r'^(\d+)、\s*(.+)',  # "1、xxx"
+            r'^\((\d+)\)\s*(.+)',  # "(1) xxx"
         ]
 
         for pattern in numbering_patterns:
-            match = re.match(pattern, text.strip())
+            match = re.match(pattern, stripped_text)
             if match:
-                return {
-                    'numbering': match.group(1),
-                    'clean_name': match.group(2).rstrip(),  # 保留前导缩进
-                    'level': 1
-                }
+                numbering = match.group(1)
+                clean_name = match.group(2).rstrip()
+                break
 
-        # 没有编号的项目
+        # 4. 根据关键词和缩进计算层级
+        # 优先使用文字表述关系判断
+        calculated_level = indent_count  # 默认使用缩进值
+
+        # 检查一级关键词
+        is_level_1 = False
+        for keyword in level_1_keywords:
+            if stripped_text.startswith(keyword):
+                is_level_1 = True
+                calculated_level = 0  # 一级项目缩进为0
+                break
+
+        if not is_level_1:
+            for pattern in level_1_patterns:
+                if re.match(pattern, stripped_text):
+                    is_level_1 = True
+                    calculated_level = 0
+                    break
+
+        # 检查二级关键词（只有在非一级的情况下）
+        if not is_level_1:
+            for keyword in level_2_keywords:
+                if keyword in stripped_text:
+                    # 如果有缩进，使用缩进值；否则设置为较小的缩进
+                    if indent_count == 0:
+                        calculated_level = 2  # 默认二级缩进
+                    break
+
+            # 检查三级关键词
+            for keyword in level_3_keywords:
+                if keyword in stripped_text:
+                    # 如果有缩进，使用缩进值；否则设置为更大的缩进
+                    if indent_count == 0:
+                        calculated_level = 4  # 默认三级缩进
+                    break
+
         return {
-            'numbering': '',
-            'clean_name': text.rstrip(),  # 保留前导缩进
-            'level': 1
+            'numbering': numbering,
+            'clean_name': clean_name,
+            'level': calculated_level  # 使用计算出的层级值
         }
 
     def _is_account_name(self, text: str) -> bool:

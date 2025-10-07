@@ -66,21 +66,8 @@ class GUIDisplayVerifier:
         for i, item in enumerate(combo_items):
             print(f"  {i+1:2d}. '{item}'")
 
-        # 4. 验证"全部工作表"模式的显示
-        print(f"\n[STEP 4] 验证'全部工作表'模式...")
-        self.source_tree.current_sheet = "全部工作表"
-        self.source_tree.refresh_display()
-
-        all_mode_model = self.source_tree.model()
-        if all_mode_model:
-            print(f"[ALL_MODE] 全部工作表模式 - 根节点数量: {all_mode_model.rowCount()}")
-            for i in range(all_mode_model.rowCount()):
-                root_item = all_mode_model.item(i)
-                child_count = root_item.rowCount() if root_item else 0
-                print(f"  第{i+1}个根节点: '{root_item.text()}' (子项目: {child_count})")
-
-        # 5. 验证单个工作表模式的显示（重点测试科目余额表）
-        print(f"\n[STEP 5] 验证单个工作表模式...")
+        # 4. 验证单个工作表模式的显示（重点测试科目余额表）
+        print(f"\n[STEP 4] 验证单个工作表模式...")
 
         trial_balance_sheets = [item for item in combo_items if '科目余额' in item]
         if trial_balance_sheets:
@@ -111,7 +98,7 @@ class GUIDisplayVerifier:
                 else:
                     print(f"[SUCCESS] 显示项目数正常({row_count}个)")
 
-        # 6. 保存验证结果
+        # 5. 保存验证结果
         self.save_verification_results(workbook_manager, combo_items, trial_balance_sheets)
 
     def save_verification_results(self, workbook_manager, combo_items, trial_balance_sheets):

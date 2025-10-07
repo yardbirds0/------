@@ -18,7 +18,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.data_models import (
     WorkbookManager, WorksheetInfo, SheetType,
-    TargetItem, SourceItem
+    TargetItem, SourceItem, MappingFormula, FormulaStatus
 )
 
 
@@ -408,6 +408,100 @@ class FileManager:
     def get_workbook_manager(self) -> Optional[WorkbookManager]:
         """获取工作簿管理器实例"""
         return self.workbook_manager
+
+    def _get_mapping_save_path(self, workbook_manager: WorkbookManager) -> Optional[str]:
+        """根据工作簿路径生成映射公式保存路径"""
+        if not workbook_manager or not workbook_manager.file_path:
+            return None
+
+        base_path, _ = os.path.splitext(workbook_manager.file_path)
+        if not base_path:
+            return None
+
+        return f"{base_path}.mapping.json"
+
+    def save_mapping_formulas(self, workbook_manager: WorkbookManager) -> bool:
+        """将映射公式保存到本地JSON文件"""
+        try:
+            save_path = self._get_mapping_save_path(workbook_manager)
+            if not save_path:
+                return False
+
+            mapping_formulas = []
+            for target_id, column_map in workbook_manager.mapping_formulas.items():
+                for column_key, formula in column_map.items():
+                    if not formula or not isinstance(formula, MappingFormula):
+                        continue
+                    mapping_formulas.append({
+                        "target_id": target_id,
+                        "column_key": column_key,
+                        "column_name": formula.column_name,
+                        "formula": formula.formula,
+                        "constant_value": formula.constant_value,
+                        "status": formula.status.value if hasattr(formula, 'status') else FormulaStatus.USER_MODIFIED.value,
+                        "notes": getattr(formula, 'notes', "")
+                    })
+
+            data = {
+                "excel_path": workbook_manager.file_path,
+                "saved_at": datetime.now().isoformat(),
+                "mapping_formulas": mapping_formulas,
+                "column_configs": workbook_manager.column_configs  # ✅ 保存列配置
+            }
+
+            with open(save_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            return True
+        except Exception as e:
+            print(f"自动保存映射公式失败: {e}")
+            return False
+
+    def load_saved_formulas(self, workbook_manager: WorkbookManager) -> int:
+        """加载已保存的映射公式"""
+        try:
+            load_path = self._get_mapping_save_path(workbook_manager)
+            if not load_path or not os.path.exists(load_path):
+                return 0
+
+            with open(load_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            # ✅ 加载列配置
+            column_configs = data.get("column_configs", {})
+            workbook_manager.column_configs = column_configs
+
+            formulas = data.get("mapping_formulas", [])
+            applied_count = 0
+
+            for entry in formulas:
+                target_id = entry.get("target_id")
+                if not target_id or target_id not in workbook_manager.target_items:
+                    continue
+
+                column_key = entry.get("column_key", "__default__")
+                column_name = entry.get("column_name", "")
+                formula_text = entry.get("formula", "")
+                constant_value = entry.get("constant_value")
+                status_value = entry.get("status", FormulaStatus.USER_MODIFIED.value)
+                notes = entry.get("notes", "")
+
+                try:
+                    status = FormulaStatus(status_value)
+                except ValueError:
+                    status = FormulaStatus.USER_MODIFIED
+
+                mapping = workbook_manager.ensure_mapping(target_id, column_key, column_name)
+                mapping.update_formula(formula_text, status=status, column_name=column_name)
+                mapping.constant_value = constant_value
+                mapping.notes = notes
+
+                applied_count += 1
+
+            return applied_count
+        except Exception as e:
+            print(f"加载映射公式失败: {e}")
+            return 0
 
 
 class FileManagerUI:

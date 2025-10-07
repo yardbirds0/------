@@ -148,8 +148,6 @@ class FixVerifier:
             tested_sheets = 0
             for i in range(min(3, combo_count)):  # 测试前3个工作表
                 sheet_name = source_tree.sheet_combo.itemText(i)
-                if sheet_name == "全部工作表":
-                    continue
 
                 print(f"    测试工作表: '{sheet_name}'")
 

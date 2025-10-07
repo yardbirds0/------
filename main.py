@@ -8,7 +8,7 @@ AI辅助财务报表数据映射与填充工具 - PySide6版本
 import sys
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple, Set
 import json
 from datetime import datetime
 import requests
@@ -17,47 +17,150 @@ import time
 
 # PySide6 imports
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QSplitter, QTreeView, QTableView, QTextEdit, QPlainTextEdit,
-    QLineEdit, QPushButton, QTabWidget, QDockWidget, QFormLayout,
-    QLabel, QProgressBar, QStatusBar, QMenuBar, QToolBar,
-    QStyledItemDelegate, QHeaderView, QAbstractItemView,
-    QFileDialog, QMessageBox, QGroupBox, QSpinBox, QCheckBox,
-    QMenu, QDialog, QComboBox, QScrollArea, QSlider, QDoubleSpinBox
+    QApplication,
+    QMainWindow,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QSplitter,
+    QTreeView,
+    QTableView,
+    QTextEdit,
+    QPlainTextEdit,
+    QLineEdit,
+    QPushButton,
+    QTabWidget,
+    QDockWidget,
+    QFormLayout,
+    QLabel,
+    QProgressBar,
+    QStatusBar,
+    QMenuBar,
+    QToolBar,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
+    QHeaderView,
+    QAbstractItemView,
+    QFileDialog,
+    QMessageBox,
+    QGroupBox,
+    QSpinBox,
+    QCheckBox,
+    QMenu,
+    QDialog,
+    QComboBox,
+    QScrollArea,
+    QSlider,
+    QDoubleSpinBox,
+    QSizePolicy,
+    QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
 )
 from PySide6.QtCore import (
-    Qt, QAbstractItemModel, QModelIndex, Signal,
-    QThread, QTimer, QSettings, QMimeData
+    Qt,
+    QAbstractItemModel,
+    QModelIndex,
+    Signal,
+    QThread,
+    QTimer,
+    QSettings,
+    QMimeData,
+    QSize,  # ⭐ 添加QSize支持自动行高
 )
 from PySide6.QtGui import (
-    QIcon, QPixmap, QStandardItemModel, QStandardItem,
-    QFont, QColor, QBrush, QPalette, QSyntaxHighlighter,
-    QTextCharFormat, QDrag, QAction
+    QIcon,
+    QPixmap,
+    QStandardItemModel,
+    QStandardItem,
+    QFont,
+    QColor,
+    QBrush,
+    QPalette,
+    QSyntaxHighlighter,
+    QTextCharFormat,
+    QDrag,
+    QAction,
+    QPainter,
+    QPen,
 )
 
 # 项目模块导入
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from models.data_models import (
-    TargetItem, SourceItem, MappingFormula, WorkbookManager,
-    SheetType, FormulaStatus, CalculationResult, MappingTemplate, TemplateManager
+    TargetItem,
+    SourceItem,
+    MappingFormula,
+    WorkbookManager,
+    SheetType,
+    FormulaStatus,
+    MappingTemplate,
+    TemplateManager,
 )
 from modules.file_manager import FileManager
+# AI Integration
+from modules.ai_integration.api_providers.base_provider import ProviderConfig
+from controllers.chat_controller import ChatController
 from modules.data_extractor import DataExtractor
-from modules.ai_mapper import AIMapper
 from modules.calculation_engine import CalculationEngine
 from components.advanced_widgets import (
-    DragDropTreeView, FormulaEditor, FormulaSyntaxHighlighter,
-    FormulaEditorDelegate, SearchableSourceTree, PropertyInspector,
-    FormulaEditDialog
+    DragDropTreeView,
+    FormulaEditor,
+    FormulaSyntaxHighlighter,
+    FormulaEditorDelegate,
+    SearchableSourceTree,
+    PropertyTableWidget,
+    FormulaEditDialog,
+    ColumnConfigDialog,
+    AutoResizeTableWidget,
+    ensure_interactive_header,
+    ensure_word_wrap,
+    schedule_row_resize,
+    apply_multirow_header,
+    derive_header_layout_from_metadata,
+    distribute_columns_evenly,  # 添加智能填充函数
+    ROW_NUMBER_COLUMN_WIDTH,
 )
-from components.sheet_explorer import SheetExplorerModel, SheetClassificationDialog
+from components.sheet_explorer import SheetClassificationDialog
+
+# ==================== 全局表格样式 ====================
+
+# 统一的表格网格线样式
+TABLE_GRID_STYLE = """
+    QTableWidget {
+        gridline-color: #d0d0d0;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+    }
+    QTableWidget::item {
+        padding: 4px;
+        border: none;
+    }
+    QTableView {
+        gridline-color: #d0d0d0;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+    }
+    QTableView::item {
+        padding: 4px;
+        border: none;
+    }
+"""
 
 # ==================== AI Parameter Control Classes ====================
+
 
 class ParameterControl(QWidget):
     """AI参数控制基类 - 包含启用复选框和参数值控件"""
 
-    def __init__(self, param_name: str, display_name: str, description: str = "", default_value=None, parent=None):
+    def __init__(
+        self,
+        param_name: str,
+        display_name: str,
+        description: str = "",
+        default_value=None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.param_name = param_name
         self.display_name = display_name
@@ -108,14 +211,16 @@ class ParameterControl(QWidget):
         """启用状态切换"""
         if self.value_widget:
             self.value_widget.setEnabled(checked)
-        self.setStyleSheet(f"""
+        self.setStyleSheet(
+            f"""
             ParameterControl {{
                 border: 1px solid {'#3498db' if checked else '#bdc3c7'};
                 border-radius: 4px;
                 background-color: {'#f8f9fa' if checked else '#ffffff'};
                 margin: 2px;
             }}
-        """)
+        """
+        )
 
     def is_enabled(self) -> bool:
         """是否启用此参数"""
@@ -143,12 +248,22 @@ class ParameterControl(QWidget):
             return {self.param_name: self.get_value()}
         return {}
 
+
 class NumericParameterControl(ParameterControl):
     """数值参数控制 - 滑块+文本输入双向绑定"""
 
-    def __init__(self, param_name: str, display_name: str, description: str = "",
-                 default_value: float = 0.0, min_value: float = 0.0, max_value: float = 1.0,
-                 decimals: int = 2, step: float = 0.1, parent=None):
+    def __init__(
+        self,
+        param_name: str,
+        display_name: str,
+        description: str = "",
+        default_value: float = 0.0,
+        min_value: float = 0.0,
+        max_value: float = 1.0,
+        decimals: int = 2,
+        step: float = 0.1,
+        parent=None,
+    ):
         self.min_value = min_value
         self.max_value = max_value
         self.decimals = decimals
@@ -163,9 +278,9 @@ class NumericParameterControl(ParameterControl):
 
         # 滑块
         self.slider = QSlider(Qt.Horizontal)
-        self.slider.setMinimum(int(self.min_value * (10 ** self.decimals)))
-        self.slider.setMaximum(int(self.max_value * (10 ** self.decimals)))
-        self.slider.setValue(int(self.default_value * (10 ** self.decimals)))
+        self.slider.setMinimum(int(self.min_value * (10**self.decimals)))
+        self.slider.setMaximum(int(self.max_value * (10**self.decimals)))
+        self.slider.setValue(int(self.default_value * (10**self.decimals)))
         self.slider.valueChanged.connect(self.on_slider_changed)
         layout.addWidget(self.slider)
 
@@ -180,7 +295,7 @@ class NumericParameterControl(ParameterControl):
 
     def on_slider_changed(self, value: int):
         """滑块值改变时更新文本输入"""
-        float_value = value / (10 ** self.decimals)
+        float_value = value / (10**self.decimals)
         self.text_input.setText(f"{float_value:.{self.decimals}f}")
 
     def on_text_changed(self, text: str):
@@ -188,7 +303,7 @@ class NumericParameterControl(ParameterControl):
         try:
             value = float(text)
             if self.min_value <= value <= self.max_value:
-                slider_value = int(value * (10 ** self.decimals))
+                slider_value = int(value * (10**self.decimals))
                 self.slider.blockSignals(True)  # 防止循环信号
                 self.slider.setValue(slider_value)
                 self.slider.blockSignals(False)
@@ -209,7 +324,7 @@ class NumericParameterControl(ParameterControl):
         """设置数值"""
         value = max(self.min_value, min(self.max_value, value))
         self.text_input.setText(f"{value:.{self.decimals}f}")
-        self.slider.setValue(int(value * (10 ** self.decimals)))
+        self.slider.setValue(int(value * (10**self.decimals)))
 
     def validate_value(self) -> bool:
         """验证数值范围"""
@@ -218,6 +333,7 @@ class NumericParameterControl(ParameterControl):
             return self.min_value <= value <= self.max_value
         except ValueError:
             return False
+
 
 class BooleanParameterControl(ParameterControl):
     """布尔参数控制"""
@@ -236,11 +352,20 @@ class BooleanParameterControl(ParameterControl):
         """设置布尔值"""
         self.checkbox.setChecked(bool(value))
 
+
 class TextParameterControl(ParameterControl):
     """文本参数控制"""
 
-    def __init__(self, param_name: str, display_name: str, description: str = "",
-                 default_value: str = "", placeholder: str = "", multiline: bool = False, parent=None):
+    def __init__(
+        self,
+        param_name: str,
+        display_name: str,
+        description: str = "",
+        default_value: str = "",
+        placeholder: str = "",
+        multiline: bool = False,
+        parent=None,
+    ):
         self.placeholder = placeholder
         self.multiline = multiline
         super().__init__(param_name, display_name, description, default_value, parent)
@@ -274,11 +399,19 @@ class TextParameterControl(ParameterControl):
         else:
             self.text_widget.setText(str(value))
 
+
 class EnumParameterControl(ParameterControl):
     """枚举参数控制（下拉选择）"""
 
-    def __init__(self, param_name: str, display_name: str, description: str = "",
-                 default_value=None, options: List = None, parent=None):
+    def __init__(
+        self,
+        param_name: str,
+        display_name: str,
+        description: str = "",
+        default_value=None,
+        options: List = None,
+        parent=None,
+    ):
         self.options = options or []
         super().__init__(param_name, display_name, description, default_value, parent)
 
@@ -309,6 +442,7 @@ class EnumParameterControl(ParameterControl):
         if index >= 0:
             self.combo.setCurrentIndex(index)
 
+
 class CollapsibleGroupBox(QWidget):
     """可折叠的分组框"""
 
@@ -317,7 +451,8 @@ class CollapsibleGroupBox(QWidget):
 
         # 创建标题按钮
         self.title_button = QPushButton(f"▼ {title}")
-        self.title_button.setStyleSheet("""
+        self.title_button.setStyleSheet(
+            """
             QPushButton {
                 text-align: left;
                 border: none;
@@ -326,9 +461,10 @@ class CollapsibleGroupBox(QWidget):
                 padding: 5px;
             }
             QPushButton:hover {
-                background-color: #e0e0e0;
+                background-color: rgba(100, 149, 237, 0.15);
             }
-        """)
+        """
+        )
         self.title_button.clicked.connect(self.toggle_collapsed)
 
         # 内容区域
@@ -378,34 +514,36 @@ class CollapsibleGroupBox(QWidget):
         """添加布局到内容区域"""
         self.content_layout.addLayout(layout)
 
+
 # ==================== 聊天消息气泡控件 ====================
+
 
 class MessageBubble(QWidget):
     """基础消息气泡控件"""
-    
+
     def __init__(self, message: str, timestamp: str = None, parent=None):
         super().__init__(parent)
         self.message = message
         self.timestamp = timestamp or datetime.now().strftime("%H:%M")
         self.setup_ui()
-        
+
     def setup_ui(self):
         """设置UI"""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 5, 10, 5)
-        
+
         # 消息内容
         self.message_label = QLabel(self.message)
         self.message_label.setWordWrap(True)
         self.message_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.message_label)
-        
+
         # 时间戳
         self.time_label = QLabel(self.timestamp)
         self.time_label.setStyleSheet("color: #888; font-size: 10px;")
         self.time_label.setAlignment(Qt.AlignRight)
         layout.addWidget(self.time_label)
-        
+
     def update_message(self, message: str):
         """更新消息内容（用于流式输出）"""
         self.message = message
@@ -414,56 +552,64 @@ class MessageBubble(QWidget):
 
 class UserMessageBubble(MessageBubble):
     """用户消息气泡"""
-    
+
     def __init__(self, message: str, timestamp: str = None, parent=None):
         super().__init__(message, timestamp, parent)
         self.setup_style()
-        
+
     def setup_style(self):
         """设置用户消息样式"""
-        self.setStyleSheet("""
+        self.setStyleSheet(
+            """
             UserMessageBubble {
                 background-color: #007AFF;
                 border-radius: 12px;
                 margin-left: 50px;
                 margin-right: 10px;
             }
-        """)
+        """
+        )
         self.message_label.setStyleSheet("color: white; padding: 8px;")
-        self.time_label.setStyleSheet("color: #E0E0E0; font-size: 10px; padding-right: 8px;")
+        self.time_label.setStyleSheet(
+            "color: #E0E0E0; font-size: 10px; padding-right: 8px;"
+        )
 
 
 class AssistantMessageBubble(MessageBubble):
     """AI助手消息气泡"""
-    
+
     def __init__(self, message: str = "", timestamp: str = None, parent=None):
         super().__init__(message, timestamp, parent)
         self.is_streaming = False
         self.setup_style()
-        
+
     def setup_style(self):
         """设置AI消息样式"""
-        self.setStyleSheet("""
+        self.setStyleSheet(
+            """
             AssistantMessageBubble {
                 background-color: #F0F0F0;
                 border-radius: 12px;
                 margin-left: 10px;
                 margin-right: 50px;
             }
-        """)
+        """
+        )
         self.message_label.setStyleSheet("color: #333; padding: 8px;")
-        self.time_label.setStyleSheet("color: #888; font-size: 10px; padding-right: 8px;")
-        
+        self.time_label.setStyleSheet(
+            "color: #888; font-size: 10px; padding-right: 8px;"
+        )
+
     def start_streaming(self):
         """开始流式输出模式"""
         self.is_streaming = True
         self.message_label.setText("...")
-        
+
     def update_streaming_text(self, text: str):
         """更新流式文本"""
         if self.is_streaming:
             self.update_message(text)
-            
+
     def finish_streaming(self):
         """结束流式输出"""
         self.is_streaming = False
@@ -471,43 +617,45 @@ class AssistantMessageBubble(MessageBubble):
 
 class TypingIndicator(QWidget):
     """输入指示器（显示AI正在输入）"""
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setup_ui()
         self.setup_animation()
-        
+
     def setup_ui(self):
         """设置UI"""
         layout = QHBoxLayout(self)
         layout.setContentsMargins(20, 5, 20, 5)
-        
+
         # AI头像或标识
         ai_label = QLabel("🤖")
         ai_label.setStyleSheet("font-size: 16px;")
         layout.addWidget(ai_label)
-        
+
         # 输入动画区域
         self.dots_label = QLabel("●●●")
-        self.dots_label.setStyleSheet("color: #888; font-size: 16px; padding-left: 10px;")
+        self.dots_label.setStyleSheet(
+            "color: #888; font-size: 16px; padding-left: 10px;"
+        )
         layout.addWidget(self.dots_label)
-        
+
         layout.addStretch()
-        
+
     def setup_animation(self):
         """设置动画效果"""
         self.animation_timer = QTimer()
         self.animation_timer.timeout.connect(self.animate_dots)
         self.dot_state = 0
-        
+
     def start_typing(self):
         """开始输入动画"""
         self.animation_timer.start(500)  # 500ms间隔
-        
+
     def stop_typing(self):
         """停止输入动画"""
         self.animation_timer.stop()
-        
+
     def animate_dots(self):
         """动画效果"""
         dots = ["●", "●●", "●●●"]
@@ -517,46 +665,48 @@ class TypingIndicator(QWidget):
 
 class ChatScrollArea(QScrollArea):
     """聊天滚动区域"""
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setup_ui()
-        
+
     def setup_ui(self):
         """设置UI"""
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        
+
         # 聊天内容容器
         self.chat_widget = QWidget()
         self.chat_layout = QVBoxLayout(self.chat_widget)
         self.chat_layout.setAlignment(Qt.AlignTop)
         self.chat_layout.setSpacing(10)
-        
+
         self.setWidget(self.chat_widget)
-        
+
         # 样式
-        self.setStyleSheet("""
+        self.setStyleSheet(
+            """
             ChatScrollArea {
                 border: 1px solid #E0E0E0;
                 border-radius: 8px;
                 background-color: white;
             }
-        """)
-        
+        """
+        )
+
     def add_message(self, message_widget):
         """添加消息到聊天区域"""
         self.chat_layout.addWidget(message_widget)
-        
+
         # 滚动到底部
         QTimer.singleShot(100, self.scroll_to_bottom)
-        
+
     def scroll_to_bottom(self):
         """滚动到底部"""
         scrollbar = self.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
-        
+
     def clear_chat(self):
         """清空聊天记录"""
         while self.chat_layout.count():
@@ -564,7 +714,9 @@ class ChatScrollArea(QScrollArea):
             if child.widget():
                 child.widget().deleteLater()
 
+
 # ==================== AI Client Class ====================
+
 
 class AIClient:
     """AI客户端 - 处理OpenAI API请求，支持流式和非流式响应"""
@@ -582,42 +734,49 @@ class AIClient:
         """
         self.debug_callbacks = debug_callbacks or {}
         self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'AI-Report-Tool/1.0',
-            'Accept': 'application/json',
-            'Connection': 'keep-alive'
-        })
+        self.session.headers.update(
+            {
+                "User-Agent": "AI-Report-Tool/1.0",
+                "Accept": "application/json",
+                "Connection": "keep-alive",
+            }
+        )
 
-    def build_request_payload(self, api_url: str, api_key: str, parameters: Dict, system_prompt: str = "", user_message: str = "") -> Dict:
+    def build_request_payload(
+        self,
+        api_url: str,
+        api_key: str,
+        parameters: Dict,
+        system_prompt: str = "",
+        user_message: str = "",
+    ) -> Dict:
         """构建API请求载荷"""
         # 基础消息结构
         messages = []
 
         # 添加系统提示（如果有）
         if system_prompt.strip():
-            messages.append({
-                "role": "system",
-                "content": system_prompt.strip()
-            })
+            messages.append({"role": "system", "content": system_prompt.strip()})
 
         # 添加用户消息
-        user_content = user_message.strip() if user_message.strip() else "请说一句话来测试API连接。"
-        messages.append({
-            "role": "user",
-            "content": user_content
-        })
+        user_content = (
+            user_message.strip()
+            if user_message.strip()
+            else "请说一句话来测试API连接。"
+        )
+        messages.append({"role": "user", "content": user_content})
 
         # 构建请求载荷
-        payload = {
-            "messages": messages
-        }
+        payload = {"messages": messages}
 
         # 添加启用的参数
         for param_name, param_value in parameters.items():
             if param_name == "stop" and isinstance(param_value, str):
                 # 处理停止序列（逗号分隔的字符串转为数组）
                 if param_value.strip():
-                    payload[param_name] = [s.strip() for s in param_value.split(',') if s.strip()]
+                    payload[param_name] = [
+                        s.strip() for s in param_value.split(",") if s.strip()
+                    ]
             elif param_name == "response_format":
                 # 处理响应格式
                 if param_value != "text":
@@ -627,7 +786,15 @@ class AIClient:
 
         return payload
 
-    def make_request(self, api_url: str, api_key: str, parameters: Dict, system_prompt: str = "", user_message: str = "", stream: bool = False) -> Dict:
+    def make_request(
+        self,
+        api_url: str,
+        api_key: str,
+        parameters: Dict,
+        system_prompt: str = "",
+        user_message: str = "",
+        stream: bool = False,
+    ) -> Dict:
         """
         发送API请求
 
@@ -644,23 +811,25 @@ class AIClient:
         """
         try:
             # 构建请求载荷
-            payload = self.build_request_payload(api_url, api_key, parameters, system_prompt, user_message)
+            payload = self.build_request_payload(
+                api_url, api_key, parameters, system_prompt, user_message
+            )
 
             # 设置请求头
             headers = {
-                'Content-Type': 'application/json',
-                'Authorization': f'Bearer {api_key}'
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
             }
 
             # 调试回调：显示请求头
-            if 'on_request_headers' in self.debug_callbacks:
+            if "on_request_headers" in self.debug_callbacks:
                 headers_text = json.dumps(headers, indent=2, ensure_ascii=False)
-                self.debug_callbacks['on_request_headers'](headers_text)
+                self.debug_callbacks["on_request_headers"](headers_text)
 
             # 调试回调：显示JSON结构
-            if 'on_json_structure' in self.debug_callbacks:
+            if "on_json_structure" in self.debug_callbacks:
                 json_text = json.dumps(payload, indent=2, ensure_ascii=False)
-                self.debug_callbacks['on_json_structure'](f"请求JSON:\n{json_text}")
+                self.debug_callbacks["on_json_structure"](f"请求JSON:\n{json_text}")
 
             # 发送请求
             if stream:
@@ -670,90 +839,87 @@ class AIClient:
 
         except Exception as e:
             error_result = {
-                'success': False,
-                'error': str(e),
-                'response_data': None,
-                'ai_response': None
+                "success": False,
+                "error": str(e),
+                "response_data": None,
+                "ai_response": None,
             }
 
             # 调试回调：显示错误
-            if 'on_ai_response' in self.debug_callbacks:
-                self.debug_callbacks['on_ai_response'](f"错误: {str(e)}")
+            if "on_ai_response" in self.debug_callbacks:
+                self.debug_callbacks["on_ai_response"](f"错误: {str(e)}")
 
             return error_result
 
-    def _handle_normal_request(self, api_url: str, headers: Dict, payload: Dict) -> Dict:
+    def _handle_normal_request(
+        self, api_url: str, headers: Dict, payload: Dict
+    ) -> Dict:
         """处理非流式请求"""
-        response = self.session.post(
-            api_url,
-            headers=headers,
-            json=payload,
-            timeout=30
-        )
+        response = self.session.post(api_url, headers=headers, json=payload, timeout=30)
 
         # 调试回调：显示接收到的数据
-        if 'on_received_data' in self.debug_callbacks:
+        if "on_received_data" in self.debug_callbacks:
             received_text = f"状态码: {response.status_code}\n\n"
-            received_text += f"响应头:\n{json.dumps(dict(response.headers), indent=2)}\n\n"
+            received_text += (
+                f"响应头:\n{json.dumps(dict(response.headers), indent=2)}\n\n"
+            )
             received_text += f"响应体:\n{response.text}"
-            self.debug_callbacks['on_received_data'](received_text)
+            self.debug_callbacks["on_received_data"](received_text)
 
         if response.status_code == 200:
             response_data = response.json()
 
             # 调试回调：显示JSON结构
-            if 'on_json_structure' in self.debug_callbacks:
+            if "on_json_structure" in self.debug_callbacks:
                 json_text = json.dumps(response_data, indent=2, ensure_ascii=False)
-                current_text = self.debug_callbacks.get('current_json_text', '')
+                current_text = self.debug_callbacks.get("current_json_text", "")
                 updated_text = f"{current_text}\n\n响应JSON:\n{json_text}"
-                self.debug_callbacks['on_json_structure'](updated_text)
+                self.debug_callbacks["on_json_structure"](updated_text)
 
             # 提取AI响应
             ai_response = ""
-            if 'choices' in response_data and len(response_data['choices']) > 0:
-                choice = response_data['choices'][0]
-                if 'message' in choice and 'content' in choice['message']:
-                    ai_response = choice['message']['content']
+            if "choices" in response_data and len(response_data["choices"]) > 0:
+                choice = response_data["choices"][0]
+                if "message" in choice and "content" in choice["message"]:
+                    ai_response = choice["message"]["content"]
 
             # 调试回调：显示AI响应
-            if 'on_ai_response' in self.debug_callbacks:
-                self.debug_callbacks['on_ai_response'](ai_response)
+            if "on_ai_response" in self.debug_callbacks:
+                self.debug_callbacks["on_ai_response"](ai_response)
 
             return {
-                'success': True,
-                'error': None,
-                'response_data': response_data,
-                'ai_response': ai_response
+                "success": True,
+                "error": None,
+                "response_data": response_data,
+                "ai_response": ai_response,
             }
         else:
             error_msg = f"HTTP {response.status_code}: {response.text}"
             return {
-                'success': False,
-                'error': error_msg,
-                'response_data': None,
-                'ai_response': None
+                "success": False,
+                "error": error_msg,
+                "response_data": None,
+                "ai_response": None,
             }
 
-    def _handle_streaming_request(self, api_url: str, headers: Dict, payload: Dict) -> Dict:
+    def _handle_streaming_request(
+        self, api_url: str, headers: Dict, payload: Dict
+    ) -> Dict:
         """处理流式请求"""
         # 设置流式请求参数
-        payload['stream'] = True
+        payload["stream"] = True
 
         response = self.session.post(
-            api_url,
-            headers=headers,
-            json=payload,
-            stream=True,
-            timeout=30
+            api_url, headers=headers, json=payload, stream=True, timeout=30
         )
 
         if response.status_code != 200:
             error_msg = f"HTTP {response.status_code}: {response.text}"
             return {
-                'success': False,
-                'error': error_msg,
-                'response_data': None,
-                'ai_response': None
+                "success": False,
+                "error": error_msg,
+                "response_data": None,
+                "ai_response": None,
             }
 
         # 处理流式响应
@@ -762,23 +928,23 @@ class AIClient:
 
         try:
             # 调试回调：显示开始接收流式数据
-            if 'on_received_data' in self.debug_callbacks:
-                self.debug_callbacks['on_received_data']("开始接收流式数据...\n")
+            if "on_received_data" in self.debug_callbacks:
+                self.debug_callbacks["on_received_data"]("开始接收流式数据...\n")
 
             for line in response.iter_lines(decode_unicode=True):
                 if line:
                     line = line.strip()
 
                     # 跳过注释行和空行
-                    if not line or line.startswith(':'):
+                    if not line or line.startswith(":"):
                         continue
 
                     # 处理SSE数据
-                    if line.startswith('data: '):
+                    if line.startswith("data: "):
                         data_content = line[6:]  # 移除 "data: " 前缀
 
                         # 检查是否是结束标记
-                        if data_content == '[DONE]':
+                        if data_content == "[DONE]":
                             break
 
                         try:
@@ -786,52 +952,72 @@ class AIClient:
                             full_response_chunks.append(chunk_data)
 
                             # 提取增量内容
-                            if 'choices' in chunk_data and len(chunk_data['choices']) > 0:
-                                choice = chunk_data['choices'][0]
-                                if 'delta' in choice and 'content' in choice['delta']:
-                                    content = choice['delta']['content']
+                            if (
+                                "choices" in chunk_data
+                                and len(chunk_data["choices"]) > 0
+                            ):
+                                choice = chunk_data["choices"][0]
+                                if "delta" in choice and "content" in choice["delta"]:
+                                    content = choice["delta"]["content"]
                                     accumulated_content += content
 
                                     # 实时更新AI响应显示
-                                    if 'on_ai_response' in self.debug_callbacks:
-                                        self.debug_callbacks['on_ai_response'](accumulated_content)
+                                    if "on_ai_response" in self.debug_callbacks:
+                                        self.debug_callbacks["on_ai_response"](
+                                            accumulated_content
+                                        )
 
                             # 更新接收数据显示
-                            if 'on_received_data' in self.debug_callbacks:
+                            if "on_received_data" in self.debug_callbacks:
                                 received_text = f"接收到数据块 {len(full_response_chunks)}:\n{data_content}\n\n"
-                                current_text = self.debug_callbacks.get('current_received_text', '')
-                                self.debug_callbacks['on_received_data'](current_text + received_text)
+                                current_text = self.debug_callbacks.get(
+                                    "current_received_text", ""
+                                )
+                                self.debug_callbacks["on_received_data"](
+                                    current_text + received_text
+                                )
 
                         except json.JSONDecodeError as e:
                             # 忽略JSON解析错误，继续处理下一行
                             continue
 
             # 调试回调：显示完整JSON结构
-            if 'on_json_structure' in self.debug_callbacks and full_response_chunks:
-                json_text = json.dumps(full_response_chunks, indent=2, ensure_ascii=False)
-                current_text = self.debug_callbacks.get('current_json_text', '')
+            if "on_json_structure" in self.debug_callbacks and full_response_chunks:
+                json_text = json.dumps(
+                    full_response_chunks, indent=2, ensure_ascii=False
+                )
+                current_text = self.debug_callbacks.get("current_json_text", "")
                 updated_text = f"{current_text}\n\n流式响应JSON块:\n{json_text}"
-                self.debug_callbacks['on_json_structure'](updated_text)
+                self.debug_callbacks["on_json_structure"](updated_text)
 
             return {
-                'success': True,
-                'error': None,
-                'response_data': full_response_chunks,
-                'ai_response': accumulated_content
+                "success": True,
+                "error": None,
+                "response_data": full_response_chunks,
+                "ai_response": accumulated_content,
             }
 
         except Exception as e:
             error_msg = f"流式响应处理错误: {str(e)}"
             return {
-                'success': False,
-                'error': error_msg,
-                'response_data': None,
-                'ai_response': accumulated_content  # 返回已接收的部分内容
+                "success": False,
+                "error": error_msg,
+                "response_data": None,
+                "ai_response": accumulated_content,  # 返回已接收的部分内容
             }
 
-from utils.excel_utils_v2 import (
-    validate_formula_syntax_v2, parse_formula_references_v2,
-    build_formula_reference_v2, evaluate_formula_with_values_v2
+
+from utils.excel_utils import (
+    validate_formula_syntax_v2,
+    parse_formula_references_v2,
+    parse_formula_references_v3,
+    build_formula_reference_v2,
+    evaluate_formula_with_values_v2,
+    # 三段式公式支持
+    validate_formula_syntax_three_segment,
+    parse_formula_references_three_segment,
+    build_formula_reference_three_segment,
+    evaluate_formula_with_values_three_segment,
 )
 
 
@@ -870,16 +1056,13 @@ class FormulaSyntaxHighlighter(QSyntaxHighlighter):
         super().__init__(parent)
         self.highlighting_rules = []
 
-        # 工作表引用格式: [工作表名:"项目名"](单元格地址)
+        # 工作表引用格式: [工作表名]A1
         sheet_format = QTextCharFormat()
         sheet_format.setForeground(QColor(0, 120, 215))  # 蓝色
         sheet_format.setFontWeight(QFont.Bold)
 
-        item_format = QTextCharFormat()
-        item_format.setForeground(QColor(0, 128, 0))  # 绿色
-
         cell_format = QTextCharFormat()
-        cell_format.setForeground(QColor(128, 0, 128))  # 紫色
+        cell_format.setForeground(QColor(0, 128, 0))  # 绿色
 
         operator_format = QTextCharFormat()
         operator_format.setForeground(QColor(255, 140, 0))  # 橙色
@@ -887,19 +1070,107 @@ class FormulaSyntaxHighlighter(QSyntaxHighlighter):
 
         # 添加高亮规则
         self.highlighting_rules = [
-            (r'\[[^\]]+\]', sheet_format),  # [工作表名]
-            (r'"[^"]*"', item_format),      # "项目名"
-            (r'\([A-Z]+\d+\)', cell_format), # (单元格地址)
-            (r'[+\-*/()]', operator_format)  # 运算符
+            (r"\[[^\]]+\]", sheet_format),  # [工作表名]
+            (r"(?<=\])\$?[A-Z]+\$?\d+", cell_format),  # 单元格
+            (r"[+\-*/()]", operator_format),  # 运算符
         ]
 
     def highlightBlock(self, text):
         """应用语法高亮"""
         import re
+
         for pattern, format_obj in self.highlighting_rules:
             for match in re.finditer(pattern, text):
                 start, end = match.span()
                 self.setFormat(start, end - start, format_obj)
+
+
+class SearchHighlightDelegate(QStyledItemDelegate):
+    """搜索高亮委托 - 覆盖CSS样式实现高亮显示
+
+    根据data/importants.md的经验，Qt的CSS样式会覆盖model返回的BackgroundRole。
+    解决方案：使用自定义delegate完全控制绘制流程，绕过Qt的style系统。
+
+    核心修复：
+    1. 先让Qt绘制默认内容（包括文字）
+    2. 然后在文字上方叠加半透明高亮背景
+    3. 这样既保留文字，又显示高亮效果
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.highlight_color = QColor("#ffe0f0")  # 粉色高亮，匹配主题
+
+    def sizeHint(self, option, index: QModelIndex):
+        """计算单元格大小提示（支持多行文本自动行高）"""
+        # 获取显示文本
+        text = index.data(Qt.DisplayRole)
+        if not text:
+            return super().sizeHint(option, index)
+
+        # 计算文本实际所需高度
+        from PySide6.QtGui import QFontMetrics
+
+        fm = QFontMetrics(option.font)
+
+        # 计算列宽
+        column_width = option.rect.width() if option.rect.width() > 0 else 200
+
+        # 计算文本边界矩形（支持换行）
+        text_str = str(text)
+        line_count = text_str.count("\n") + 1  # 换行符数量+1
+
+        # 每行基础高度（增加行间距）
+        line_height = fm.height() + 4  # 增加4px行间距
+
+        # 总高度 = 行数 * 行高 + 上下padding
+        total_height = line_count * line_height + 20  # 增加padding到20px
+
+        # 最小高度30，最大高度300（增加最大高度限制以支持更多行）
+        total_height = max(30, min(300, total_height))
+
+        return QSize(column_width, total_height)
+
+    def paint(self, painter: QPainter, option, index: QModelIndex):
+        """重写paint方法，先绘制内容再叠加高亮背景"""
+        # 检查是否有高亮背景色
+        bg_data = index.data(Qt.BackgroundRole)
+
+        # 🔧 支持QColor和QBrush两种类型
+        bg_color = None
+        if isinstance(bg_data, QColor):
+            bg_color = bg_data
+        elif isinstance(bg_data, QBrush):
+            bg_color = bg_data.color()  # 从QBrush提取QColor
+
+        if bg_color and bg_color.isValid():
+            # 🔧 关键修复：先让Qt绘制默认内容（包括文字）
+            # 注意：不修改option，使用原始option让文字正常显示
+            super().paint(painter, option, index)
+
+            # 🔧 然后在文字上方叠加半透明高亮背景
+            painter.save()
+
+            # 创建半透明的高亮颜色（让文字可见）
+            highlight_overlay = QColor(bg_color)
+            highlight_overlay.setAlpha(120)  # 设置透明度，让文字可见
+
+            painter.fillRect(option.rect, highlight_overlay)
+
+            # 如果是选中状态，添加额外的选中效果
+            if option.state & QStyleOptionViewItem.State_Selected:
+                selection_overlay = QColor(235, 145, 190, 50)  # 更浅的半透明粉色
+                painter.fillRect(option.rect, selection_overlay)
+
+            # 如果是悬停状态，添加额外的悬停效果
+            elif option.state & QStyleOptionViewItem.State_MouseOver:
+                hover_overlay = QColor(235, 145, 190, 30)  # 非常浅的半透明粉色
+                painter.fillRect(option.rect, hover_overlay)
+
+            painter.restore()
+        else:
+            # 没有高亮，使用默认绘制（CSS生效）
+            super().paint(painter, option, index)
 
 
 class TargetItemModel(QAbstractItemModel):
@@ -908,6 +1179,7 @@ class TargetItemModel(QAbstractItemModel):
     # 信号
     itemSelected = Signal(str)  # (target_id)
     navigationRequested = Signal(str, str)  # (category, item_name)
+    formulaEdited = Signal(list)  # 更新的目标项ID列表
 
     def __init__(self, workbook_manager: Optional[WorkbookManager] = None):
         super().__init__()
@@ -915,7 +1187,18 @@ class TargetItemModel(QAbstractItemModel):
         self.active_sheet_name = None  # 当前激活的工作表名
         self.root_items = []
         self.category_items = {}  # 分类节点
-        self.headers = ["状态", "级别", "项目名称", "映射公式", "预览值"]
+        self.static_headers = ["状态", "级别"]  # 删除"项目名称"，改为从Excel动态列获取
+        self.dynamic_columns: List[Dict[str, Any]] = []
+        self.headers = list(self.static_headers)
+        self._header_layout: Dict[int, Dict[str, Any]] = {}
+        self._header_row_count: int = 1
+        self.search_text = ""  # 搜索文本，用于高亮匹配单元格
+        self.editable_columns_set: Set[str] = set()  # 可编辑列名集合
+
+        # 添加日志管理器引用
+        self.log_manager = None
+        self.active_sheet_metadata = []
+
         self.build_tree()
 
     def set_workbook_manager(self, workbook_manager: WorkbookManager):
@@ -932,12 +1215,31 @@ class TargetItemModel(QAbstractItemModel):
         self.build_tree()
         self.endResetModel()
 
+    def set_search_text(self, text: str):
+        """设置搜索文本并触发数据刷新以实现高亮"""
+        self.search_text = text.lower() if text else ""
+        # 触发所有可见行的背景色更新
+        if self.root_items:
+            top_left = self.index(0, 0)
+            bottom_right = self.index(len(self.root_items) - 1, self.columnCount() - 1)
+            self.dataChanged.emit(top_left, bottom_right, [Qt.BackgroundRole])
+
+    def set_editable_columns(self, column_config: List[Dict[str, Any]]):
+        """设置可编辑列（从配置读取）"""
+        self.editable_columns_set = {
+            entry["name"] for entry in column_config if entry.get("editable", False)
+        }
+
     def build_tree(self):
         """构建扁平列表 - 按原始Excel行顺序显示，不分组"""
         self.root_items = []
         self.category_items = {}
 
         if not self.workbook_manager:
+            self.dynamic_columns = []
+            self.headers = list(self.static_headers)
+            self._header_layout = {}
+            self._header_row_count = 1
             return
 
         # 筛选当前激活工作表的目标项
@@ -953,7 +1255,167 @@ class TargetItemModel(QAbstractItemModel):
         # 直接将所有目标项按顺序添加到根列表，不分组
         self.root_items = filtered_targets
 
-    def index(self, row: int, column: int, parent: QModelIndex = QModelIndex()) -> QModelIndex:
+        self._update_dynamic_columns(filtered_targets)
+
+    def _update_dynamic_columns(self, filtered_targets: List[TargetItem]):
+        sheet_name = self.active_sheet_name
+        if not sheet_name and filtered_targets:
+            sheet_name = filtered_targets[0].sheet_name
+
+        metadata: List[Dict[str, Any]] = []
+        if self.workbook_manager and sheet_name:
+            metadata = self.workbook_manager.target_sheet_columns.get(sheet_name, [])
+
+        # 添加调试日志
+        if hasattr(self, "log_manager"):
+            self.log_manager.info(f"表格'{sheet_name}'的列元数据: {len(metadata)}列")
+
+        # 如果元数据为空，提供默认配置
+        if not metadata and sheet_name:
+            if hasattr(self, "log_manager"):
+                self.log_manager.warning(
+                    f"表格'{sheet_name}'的列元数据为空，使用默认配置"
+                )
+            # 为"企业财务快报利润因素分析表"提供特殊的默认配置
+            if "利润因素分析" in sheet_name:
+                metadata = [
+                    {
+                        "key": "指标名称",
+                        "display_name": "指标名称",
+                        "is_data_column": False,
+                        "column_index": 0,
+                        "primary_header": "指标名称",
+                        "primary_col_span": 1,
+                        "header_row_count": 1,
+                    },
+                    {
+                        "key": "金额",
+                        "display_name": "金额",
+                        "is_data_column": True,
+                        "column_index": 1,
+                        "primary_header": "金额",
+                        "primary_col_span": 1,
+                        "header_row_count": 1,
+                    },
+                    {
+                        "key": "备注",
+                        "display_name": "备注",
+                        "is_data_column": False,
+                        "column_index": 2,
+                        "primary_header": "备注",
+                        "primary_col_span": 1,
+                        "header_row_count": 1,
+                    },
+                ]
+            else:
+                # 通用默认配置
+                metadata = [
+                    {
+                        "key": "行次",
+                        "display_name": "行次",
+                        "is_data_column": False,
+                        "column_index": 0,
+                        "primary_header": "行次",
+                        "primary_col_span": 1,
+                        "header_row_count": 1,
+                    },
+                    {
+                        "key": "项目",
+                        "display_name": "项目",
+                        "is_data_column": False,
+                        "column_index": 1,
+                        "primary_header": "项目",
+                        "primary_col_span": 1,
+                        "header_row_count": 1,
+                    },
+                    {
+                        "key": "数值",
+                        "display_name": "数值",
+                        "is_data_column": True,
+                        "column_index": 2,
+                        "primary_header": "数值",
+                        "primary_col_span": 1,
+                        "header_row_count": 1,
+                    },
+                ]
+
+        self.active_sheet_metadata = metadata
+        self.dynamic_columns = []
+        for entry in metadata:
+            key = entry.get("key")
+            if not key:
+                continue
+            display_name = entry.get("display_name") or key
+            self.dynamic_columns.append(
+                {
+                    "key": key,
+                    "name": display_name,
+                    "is_data_column": entry.get("is_data_column", False),
+                    "meta": entry,
+                }
+            )
+
+        # 只传递动态列的metadata，不包含静态列
+        # 参考 SearchableSourceTree 的实现方式
+        layout_map, row_count = derive_header_layout_from_metadata(
+            metadata,  # 这里传递完整metadata，因为target_sheet_columns只包含动态列
+            base_offset=len(self.static_headers),  # 动态列从第2列开始（跳过状态、级别）
+        )
+
+        self._header_layout = layout_map
+        self._header_row_count = row_count
+
+        # 确保headers至少包含静态列
+        if not self.dynamic_columns:
+            # 如果没有动态列，至少保证headers包含静态列
+            self.headers = list(self.static_headers)
+            if hasattr(self, "log_manager") and self.log_manager:
+                self.log_manager.warning(f"表格'{sheet_name}'没有动态列，仅使用静态列")
+        else:
+            self.headers = self.static_headers + [
+                col["name"] for col in self.dynamic_columns
+            ]
+
+    def get_header_layout(self) -> Tuple[Dict[int, Dict[str, Any]], int]:
+        return self._header_layout, self._header_row_count
+
+    def _column_meta_at(self, model_column: int) -> Optional[Dict[str, Any]]:
+        index = model_column - len(self.static_headers)
+        if index < 0 or index >= len(self.dynamic_columns):
+            return None
+        return self.dynamic_columns[index]
+
+    def _resolve_target_status(self, target_item: TargetItem) -> str:
+        if not self.workbook_manager:
+            return "❓"
+
+        mappings = self.workbook_manager.mapping_formulas.get(target_item.id, {})
+        if not mappings:
+            return "⭕"
+
+        if isinstance(mappings, MappingFormula):
+            existing_statuses = {mappings.status}
+        else:
+            existing_statuses = {mapping.status for mapping in mappings.values()}
+
+        priority = [
+            (FormulaStatus.ERROR, "❌"),
+            (FormulaStatus.PENDING, "⏳"),
+            (FormulaStatus.AI_GENERATED, "🤖"),
+            (FormulaStatus.USER_MODIFIED, "✏️"),
+            (FormulaStatus.VALIDATED, "✅"),
+            (FormulaStatus.CALCULATED, "🟢"),
+        ]
+
+        for status, icon in priority:
+            if status in existing_statuses:
+                return icon
+
+        return "⭕"
+
+    def index(
+        self, row: int, column: int, parent: QModelIndex = QModelIndex()
+    ) -> QModelIndex:
         if not self.hasIndex(row, column, parent):
             return QModelIndex()
 
@@ -990,49 +1452,197 @@ class TargetItemModel(QAbstractItemModel):
         if isinstance(item, TargetItem):
             if role == Qt.DisplayRole:
                 if column == 0:  # 状态
-                    if not self.workbook_manager:
-                        return "❓"
-                    formula = self.workbook_manager.mapping_formulas.get(item.id)
-                    if not formula:
-                        return "⭕"
-                    status_icons = {
-                        FormulaStatus.EMPTY: "⭕",
-                        FormulaStatus.PENDING: "⏳",
-                        FormulaStatus.AI_GENERATED: "🤖",
-                        FormulaStatus.USER_MODIFIED: "✏️",
-                        FormulaStatus.VALIDATED: "✅",
-                        FormulaStatus.CALCULATED: "🟢",
-                        FormulaStatus.ERROR: "❌"
-                    }
-                    return status_icons.get(formula.status, "❓")
-
+                    return self._resolve_target_status(item)
                 elif column == 1:  # 级别
-                    # 显示层级编号（如1、1.1、1.1.1、2、2.1）
-                    return item.hierarchical_number if hasattr(item, 'hierarchical_number') else "1"
-
-                elif column == 2:  # 项目名称
-                    # 显示完整的项目名称（保留缩进和原始格式）
-                    # 使用original_text来保留完整的原始格式和缩进
-                    return item.original_text
-
-                elif column == 3:  # 映射公式
-                    if not self.workbook_manager:
+                    return (
+                        item.hierarchical_number
+                        if hasattr(item, "hierarchical_number")
+                        else "1"
+                    )
+                else:  # column >= 2: 动态列（原来是 >= 3）
+                    column_meta = self._column_meta_at(column)
+                    if not column_meta or not self.workbook_manager:
                         return ""
-                    formula = self.workbook_manager.mapping_formulas.get(item.id)
-                    return formula.formula if formula else ""
 
-                elif column == 4:  # 预览值
-                    if not self.workbook_manager:
-                        return ""
-                    result = self.workbook_manager.calculation_results.get(item.id)
-                    if result and result.success:
-                        return str(result.result)
+                    # 1. 尝试获取映射公式和计算结果
+                    mapping = self.workbook_manager.get_mapping(
+                        item.id, column_meta["key"]
+                    )
+                    result_map = self.workbook_manager.calculation_results.get(
+                        item.id, {}
+                    )
+                    result = result_map.get(column_meta["key"])
+
+                    preview_text = ""
+                    if result and result.success and result.result is not None:
+                        preview_text = str(result.result)
+
+                    # 2. 如果有映射公式，显示公式（和结果）
+                    if mapping:
+                        if mapping.formula:
+                            if preview_text:
+                                # ⭐ 三段式：多行显示，每个来源项一行（运算符跟随），结果单独一行
+                                from utils.excel_utils import (
+                                    parse_formula_references_three_segment,
+                                )
+
+                                refs = parse_formula_references_three_segment(
+                                    mapping.formula
+                                )
+                                if refs:
+                                    lines = []
+                                    remaining_formula = mapping.formula
+
+                                    for i, ref in enumerate(refs):
+                                        full_ref = ref["full_reference"]
+                                        pos = remaining_formula.find(full_ref)
+
+                                        if pos >= 0:
+                                            # 提取引用后的部分
+                                            after_ref = remaining_formula[
+                                                pos + len(full_ref) :
+                                            ]
+
+                                            # 如果不是最后一个引用，提取运算符
+                                            operator = ""
+                                            if i < len(refs) - 1:
+                                                after_stripped = after_ref.strip()
+                                                for op in ["+", "-", "*", "/"]:
+                                                    if after_stripped.startswith(op):
+                                                        operator = f" {op}"
+                                                        break
+
+                                            # 构建这一行：引用 + 运算符
+                                            lines.append(full_ref + operator)
+
+                                            # 更新剩余公式
+                                            remaining_formula = after_ref
+
+                                    lines.append(f"→ {preview_text}")
+                                    return "\n".join(lines)
+                                # 回退：如果解析失败，使用原格式
+                                return f"{mapping.formula}\n→ {preview_text}"
+                            return mapping.formula
+                        if mapping.constant_value not in (None, ""):
+                            return f"常量: {mapping.constant_value}"
+
+                    # 3. 如果有计算结果但没有公式，显示结果
+                    if preview_text:
+                        return preview_text
+
+                    # 4. 如果没有映射也没有结果，显示Excel原始值
+                    if hasattr(item, "columns") and column_meta["key"] in item.columns:
+                        entry = item.columns[column_meta["key"]]
+                        if entry.source_value is not None:
+                            return str(entry.source_value)
+
                     return ""
+
+            if role == Qt.EditRole and column >= len(self.static_headers):
+                column_meta = self._column_meta_at(column)
+                if not column_meta or not self.workbook_manager:
+                    return ""
+                mapping = self.workbook_manager.get_mapping(item.id, column_meta["key"])
+                return mapping.formula if mapping else ""
+
+            # 搜索高亮：如果有搜索文本，检查单元格内容是否匹配
+            if role == Qt.BackgroundRole and self.search_text:
+                display_text = ""
+
+                if column == 0:  # 状态列
+                    display_text = self._resolve_target_status(item)
+                elif column == 1:  # 级别列
+                    display_text = (
+                        item.hierarchical_number
+                        if hasattr(item, "hierarchical_number")
+                        else "1"
+                    )
+                else:  # 动态列
+                    column_meta = self._column_meta_at(column)
+                    if column_meta and self.workbook_manager:
+                        mapping = self.workbook_manager.get_mapping(
+                            item.id, column_meta["key"]
+                        )
+                        result_map = self.workbook_manager.calculation_results.get(
+                            item.id, {}
+                        )
+                        result = result_map.get(column_meta["key"])
+
+                        # 获取显示文本用于匹配
+                        if mapping and mapping.formula:
+                            display_text = mapping.formula
+                        elif result and result.success and result.result is not None:
+                            display_text = str(result.result)
+                        elif (
+                            hasattr(item, "columns")
+                            and column_meta["key"] in item.columns
+                        ):
+                            entry = item.columns[column_meta["key"]]
+                            if entry.source_value is not None:
+                                display_text = str(entry.source_value)
+
+                # 如果匹配，返回高亮颜色
+                if display_text and self.search_text in str(display_text).lower():
+                    return QColor("#ffe0f0")  # 浅粉色高亮，匹配主题
 
         return None
 
-    def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole):
+    def setData(self, index: QModelIndex, value: Any, role: int = Qt.EditRole) -> bool:
+        if role != Qt.EditRole or not index.isValid() or not self.workbook_manager:
+            return False
+
+        item = index.internalPointer()
+        if not isinstance(item, TargetItem):
+            return False
+
+        column_meta = self._column_meta_at(index.column())
+        if not column_meta:
+            return False
+
+        new_formula = (value or "").strip()
+        mapping = self.workbook_manager.ensure_mapping(
+            item.id, column_meta["key"], column_meta["name"]
+        )
+
+        if not new_formula:
+            mapping.update_formula(
+                "", status=FormulaStatus.EMPTY, column_name=column_meta["name"]
+            )
+            mapping.calculation_result = None
+            mapping.last_calculated = None
+            mapping.validation_error = ""
+            mapping.constant_value = None
+            result_map = self.workbook_manager.calculation_results.get(item.id)
+            if result_map and column_meta["key"] in result_map:
+                del result_map[column_meta["key"]]
+                if not result_map:
+                    self.workbook_manager.calculation_results.pop(item.id, None)
+        else:
+            mapping.update_formula(
+                new_formula,
+                status=FormulaStatus.USER_MODIFIED,
+                column_name=column_meta["name"],
+            )
+            mapping.validation_error = ""
+
+        left_index = index.sibling(index.row(), 0)
+        right_index = index.sibling(index.row(), self.columnCount() - 1)
+        self.dataChanged.emit(left_index, right_index, [Qt.DisplayRole])
+        self.formulaEdited.emit([item.id])
+        return True
+
+    def headerData(
+        self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole
+    ):
         if orientation == Qt.Horizontal and role == Qt.DisplayRole:
+            # 🔧 修复：对于使用多行表头的动态列，返回空字符串，让 MultiRowHeaderView 自己绘制
+            # 只有在 row_count > 1 且该列在 layout 中时，才让 MultiRowHeaderView 绘制
+            if (
+                section >= len(self.static_headers)
+                and self._header_row_count > 1
+                and section in self._header_layout
+            ):
+                return ""  # 返回空字符串，让 MultiRowHeaderView 绘制多行表头
             return self.headers[section]
         return None
 
@@ -1040,8 +1650,23 @@ class TargetItemModel(QAbstractItemModel):
         if not index.isValid():
             return Qt.NoItemFlags
 
-        # 现在只有TargetItem，都可以选择
-        return Qt.ItemIsEnabled | Qt.ItemIsSelectable
+        flags = Qt.ItemIsEnabled | Qt.ItemIsSelectable
+
+        # ✅ 从配置获取可编辑性
+        column = index.column()
+        column_name = self.headers[column] if column < len(self.headers) else ""
+
+        # 如果有配置，使用配置；否则使用默认只读列表
+        if self.editable_columns_set:
+            if column_name in self.editable_columns_set:
+                flags |= Qt.ItemIsEditable
+        else:
+            # 默认只读列列表
+            readonly_columns = ["项目", "行次", "状态", "级别"]
+            if column_name not in readonly_columns:
+                flags |= Qt.ItemIsEditable
+
+        return flags
 
     def get_target_item(self, index: QModelIndex) -> Optional[TargetItem]:
         """获取目标项"""
@@ -1052,6 +1677,13 @@ class TargetItemModel(QAbstractItemModel):
         if isinstance(item, TargetItem):
             return item
         return None
+
+    def get_index_for_target(self, target_id: str, column: int = 0) -> QModelIndex:
+        """根据目标项ID获取模型索引"""
+        for row, target_item in enumerate(self.root_items):
+            if target_item.id == target_id:
+                return self.createIndex(row, column, target_item)
+        return QModelIndex()
 
     def navigate_to_category(self, category_name: str):
         """导航到指定分类 - 现在不适用于扁平列表"""
@@ -1074,35 +1706,6 @@ class CategoryNode:
     def __init__(self, name: str, children: List[TargetItem] = None):
         self.name = name
         self.children = children or []
-
-
-    def setData(self, index: QModelIndex, value: Any, role: int = Qt.EditRole) -> bool:
-        if not index.isValid() or role != Qt.EditRole:
-            return False
-
-        item = index.internalPointer()
-        if not isinstance(item, TargetItem) or not self.workbook_manager:
-            return False
-
-        column = index.column()
-
-        if column == 3:  # 映射公式
-            # 更新或创建公式
-            if item.id not in self.workbook_manager.mapping_formulas:
-                self.workbook_manager.mapping_formulas[item.id] = MappingFormula(
-                    target_id=item.id,
-                    formula=str(value),
-                    status=FormulaStatus.USER_MODIFIED
-                )
-            else:
-                formula = self.workbook_manager.mapping_formulas[item.id]
-                formula.formula = str(value)
-                formula.status = FormulaStatus.USER_MODIFIED
-
-            self.dataChanged.emit(index, index, [role])
-            return True
-
-        return False
 
 
 class SourceItemModel(QAbstractItemModel):
@@ -1135,7 +1738,9 @@ class SourceItemModel(QAbstractItemModel):
 
         self.sheet_names = list(self.sheet_groups.keys())
 
-    def index(self, row: int, column: int, parent: QModelIndex = QModelIndex()) -> QModelIndex:
+    def index(
+        self, row: int, column: int, parent: QModelIndex = QModelIndex()
+    ) -> QModelIndex:
         if not self.hasIndex(row, column, parent):
             return QModelIndex()
 
@@ -1201,7 +1806,9 @@ class SourceItemModel(QAbstractItemModel):
 
         return None
 
-    def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole):
+    def headerData(
+        self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole
+    ):
         if orientation == Qt.Horizontal and role == Qt.DisplayRole and section == 0:
             return "来源项"
         return None
@@ -1218,8 +1825,23 @@ class MainWindow(QMainWindow):
 
         self.file_manager = FileManager()  # 移除回调，现在使用拖拽界面
         self.data_extractor = None
-        self.ai_mapper = AIMapper()
+        # AI Integration - 新的对话式 AI 助手
+        self.chat_controller = ChatController(self)
         self.calculation_engine = None
+
+        self._source_lookup_index: Dict[Tuple[str, str], List[SourceItem]] = {}
+        self._user_column_widths: Dict[int, int] = {}
+        self._main_auto_resizing = False
+        self._main_resize_retry_counts: Dict[str, int] = {}
+        self._target_column_config: Optional[List[Dict[str, Any]]] = None
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setSingleShot(True)
+        self._autosave_timer.timeout.connect(self._perform_autosave)
+        self._autosave_suspended = False
+        self._active_formula_column: Optional[str] = None
+
+        # 初始化 AI 服务（使用默认配置或从配置文件加载）
+        self._initialize_ai_service()
 
         self.init_ui()
         self.setup_models()
@@ -1240,7 +1862,7 @@ class MainWindow(QMainWindow):
         """
         if isinstance(sheet_item, str):
             return sheet_item
-        elif hasattr(sheet_item, 'name'):
+        elif hasattr(sheet_item, "name"):
             return str(sheet_item.name)
         else:
             # 兜底处理：转换为字符串
@@ -1267,53 +1889,493 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("AI辅助财务报表数据映射与填充工具 - PySide6版")
         self.setGeometry(100, 100, 1600, 1000)
 
+        # 全屏状态标志
+        self._is_fullscreen = False
+        self._saved_window_state = None
+        self._saved_splitter_sizes = []
+
         # 创建中央部件
         central_widget = QWidget()
+        central_widget.setObjectName("centralWidget")  # 设置对象名称以便样式表定位
         self.setCentralWidget(central_widget)
+        self.menuBar().setVisible(False)
 
         # 创建中央布局
         central_widget_layout = QVBoxLayout(central_widget)
+        central_widget_layout.setContentsMargins(8, 8, 8, 8)  # 添加边距使面板不贴边
+        central_widget_layout.setSpacing(8)  # 添加间距
 
+        # 创建主分割器（水平）- 改为两列布局
+        self.main_splitter = QSplitter(Qt.Horizontal)  # 保存引用用于全屏切换
+        central_widget_layout.addWidget(self.main_splitter)
 
-        # 创建主分割器（水平）
-        main_splitter = QSplitter(Qt.Horizontal)
-        central_widget_layout.addWidget(main_splitter)
+        # 中央工作台（左侧列）
+        self.create_workbench_panel(self.main_splitter)
 
-        # 左侧导航区
-        self.create_navigator_panel(main_splitter)
-
-        # 中央工作台
-        self.create_workbench_panel(main_splitter)
-
-        # 右侧工具区
-        self.create_tools_panel(main_splitter)
+        # 右侧工具区（右侧列）
+        self.create_tools_panel(self.main_splitter)
 
         # 底部日志区
         self.create_output_panel(central_widget_layout)
 
-        # 设置分割器比例
-        main_splitter.setSizes([300, 800, 400])
-
-        # 只保留最简单的菜单栏（移除重复功能）
-        self.create_simple_menus()
+        # 设置分割器比例 - 两列布局，中间:右侧 = 2:1
+        self.main_splitter.setStretchFactor(0, 2)
+        self.main_splitter.setStretchFactor(1, 1)
+        self.main_splitter.setSizes([1066, 533])
 
         # 状态栏
         self.statusBar().showMessage("就绪")
+
+        # 🎨 应用玻璃化主题(在log_manager创建后)
+        self.apply_glass_theme()
+
+        # ✨ 应用阴影效果（在所有控件创建完成后）
+        self.apply_shadow_effects()
+
+    def apply_glass_theme(self):
+        """应用玻璃质感主题样式"""
+        # 主窗口整体样式 - 半透明渐变背景
+        self.setStyleSheet(
+            """
+            QMainWindow {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(255, 245, 250, 0.85),
+                    stop:0.5 rgba(254, 242, 248, 0.8),
+                    stop:1 rgba(252, 238, 245, 0.75));
+            }
+
+            /* 中央部件背景透明 */
+            QWidget#centralWidget {
+                background: transparent;
+            }
+
+            /* 分割器样式 - 半透明手柄 */
+            QSplitter::handle {
+                background: rgba(230, 190, 205, 0.4);
+                border-radius: 3px;
+            }
+
+            QSplitter::handle:hover {
+                background: rgba(215, 130, 165, 0.5);
+            }
+
+            QSplitter::handle:horizontal {
+                width: 8px;
+                margin: 0 3px;
+            }
+
+            QSplitter::handle:vertical {
+                height: 8px;
+                margin: 3px 0;
+            }
+
+            /* QGroupBox - 玻璃质感 */
+            QGroupBox {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(255, 252, 254, 0.8),
+                    stop:0.5 rgba(255, 250, 253, 0.75),
+                    stop:1 rgba(254, 248, 252, 0.7));
+                border: 1px solid rgba(240, 215, 228, 0.7);
+                border-radius: 14px;
+                margin-top: 20px;
+                padding-top: 18px;
+                font-weight: 500;
+                font-size: 14pt;
+            }
+
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 18px;
+                top: 2px;
+                padding: 6px 16px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 rgba(215, 120, 165, 0.92),
+                    stop:1 rgba(235, 145, 190, 0.88));
+                color: white;
+                border-radius: 10px;
+                font-weight: 700;
+                font-size: 14pt !important;
+            }
+
+            /* 树形视图 - 玻璃效果（增强版） */
+            QTreeView {
+                background: rgba(255, 252, 254, 0.65);
+                border: 1px solid rgba(230, 200, 215, 0.5);
+                border-radius: 10px;
+                selection-background-color: rgba(235, 145, 190, 0.35);
+                outline: none;
+                padding: 4px;
+                font-size: 10pt;
+            }
+
+            QTreeView::item {
+                padding: 8px 10px;
+                border-radius: 5px;
+                border-right: 1px solid rgba(230, 200, 215, 0.28);
+                min-height: 28px;
+            }
+
+            QTreeView::item:hover {
+                background: rgba(235, 145, 190, 0.18);
+            }
+
+            QTreeView::item:selected {
+                background: rgba(235, 145, 190, 0.3);
+                color: #1a1a1a;
+            }
+
+            QTreeView::branch {
+                background: transparent;
+            }
+
+            /* 表格视图 - 玻璃效果（增强版） */
+            QTableView, QTableWidget {
+                background: rgba(255, 252, 254, 0.65);
+                border: 1px solid rgba(230, 200, 215, 0.5);
+                border-radius: 10px;
+                gridline-color: rgba(230, 200, 215, 0.35);
+                font-size: 10pt;
+            }
+
+            QTableView::item, QTableWidget::item {
+                padding: 4px 8px;
+                border-right: 1px solid rgba(230, 200, 215, 0.28);
+                border-bottom: 1px solid rgba(230, 200, 215, 0.18);
+                min-height: 22px;
+            }
+
+            QTableView::item:hover, QTableWidget::item:hover {
+                background: rgba(235, 145, 190, 0.12);
+            }
+
+            QTableView::item:selected, QTableWidget::item:selected {
+                background: rgba(235, 145, 190, 0.25);
+                color: #1a1a1a;
+            }
+
+            QHeaderView::section {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(255, 250, 253, 0.92),
+                    stop:1 rgba(254, 245, 251, 0.88));
+                border: none;
+                border-right: 1px solid rgba(230, 200, 215, 0.35);
+                border-bottom: 1px solid rgba(230, 200, 215, 0.45);
+                padding: 10px 12px;
+                font-weight: 600;
+                font-size: 12pt;
+                color: #5a3a47;
+                min-height: 34px;
+            }
+
+            QHeaderView::section:hover {
+                background: rgba(235, 145, 190, 0.2);
+            }
+
+            /* 选项卡样式 */
+            QTabWidget::pane {
+                background: rgba(255, 252, 254, 0.65);
+                border: 1px solid rgba(230, 200, 215, 0.5);
+                border-radius: 10px;
+                border-top-left-radius: 0;
+            }
+
+            QTabWidget::tab-bar {
+                left: 10px;
+            }
+
+            QTabBar::tab {
+                background: rgba(248, 235, 243, 0.75);
+                border: 1px solid rgba(230, 200, 215, 0.4);
+                border-bottom: none;
+                padding: 9px 18px;
+                margin-right: 5px;
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
+                color: #8b6c7d;
+                font-weight: 500;
+                font-size: 12pt;
+            }
+
+            QTabBar::tab:selected {
+                background: rgba(255, 252, 254, 0.88);
+                color: #5a3a47;
+                font-weight: 600;
+                border-color: rgba(215, 130, 165, 0.5);
+            }
+
+            QTabBar::tab:hover:!selected {
+                background: rgba(235, 145, 190, 0.15);
+            }
+
+            /* 文本编辑器样式 */
+            QTextEdit, QPlainTextEdit {
+                background: rgba(255, 252, 254, 0.75);
+                border: 1px solid rgba(230, 200, 215, 0.5);
+                border-radius: 8px;
+                padding: 8px;
+                selection-background-color: rgba(235, 145, 190, 0.35);
+                color: #5a3a47;
+            }
+
+            QTextEdit:focus, QPlainTextEdit:focus {
+                border: 2px solid rgba(215, 130, 165, 0.7);
+            }
+
+            QLineEdit {
+                background: rgba(255, 252, 254, 0.82);
+                border: 1px solid rgba(230, 200, 215, 0.5);
+                border-radius: 8px;
+                padding: 7px 12px;
+                selection-background-color: rgba(235, 145, 190, 0.35);
+                color: #5a3a47;
+            }
+
+            QLineEdit:focus {
+                border: 2px solid rgba(215, 130, 165, 0.7);
+                background: rgba(255, 252, 254, 0.92);
+            }
+
+            QComboBox {
+                background: rgba(255, 252, 254, 0.82);
+                border: 1px solid rgba(230, 200, 215, 0.5);
+                border-radius: 8px;
+                padding: 7px 12px;
+                color: #5a3a47;
+                font-size: 12pt;
+            }
+
+            QComboBox:focus, QComboBox:hover {
+                border: 1px solid rgba(215, 130, 165, 0.6);
+                background: rgba(255, 252, 254, 0.9);
+            }
+
+            QComboBox::drop-down {
+                border: none;
+                width: 30px;
+                background: rgba(235, 145, 190, 0.12);
+                border-top-right-radius: 7px;
+                border-bottom-right-radius: 7px;
+            }
+
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 6px solid #8b6c7d;
+                width: 0;
+                height: 0;
+                margin-right: 8px;
+            }
+
+            QComboBox::down-arrow:hover {
+                border-top-color: #d778a5;
+            }
+
+            QComboBox QAbstractItemView {
+                background: rgba(255, 252, 254, 0.95);
+                border: 1px solid rgba(230, 200, 215, 0.6);
+                border-radius: 6px;
+                selection-background-color: rgba(235, 145, 190, 0.3);
+                font-size: 12pt;
+            }
+
+            /* 按钮样式 - 玻璃质感 */
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(255, 252, 254, 0.92),
+                    stop:1 rgba(252, 245, 250, 0.88));
+                border: 1px solid rgba(230, 200, 215, 0.6);
+                border-radius: 8px;
+                padding: 7px 18px;
+                color: #5a3a47;
+                font-weight: 600;
+                font-size: 12pt;
+            }
+
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(235, 145, 190, 0.25),
+                    stop:1 rgba(235, 145, 190, 0.18));
+                border: 1px solid rgba(215, 130, 165, 0.5);
+            }
+
+            QPushButton:pressed {
+                background: rgba(235, 145, 190, 0.32);
+                border: 1px solid rgba(215, 130, 165, 0.6);
+            }
+
+            QPushButton:disabled {
+                background: rgba(248, 235, 243, 0.55);
+                color: rgba(140, 140, 140, 0.75);
+                border: 1px solid rgba(230, 200, 215, 0.35);
+            }
+
+            /* 滚动条样式 - 半透明（扩大尺寸） */
+            QScrollBar:vertical {
+                background: rgba(248, 235, 243, 0.35);
+                width: 22px;
+                border-radius: 8px;
+                margin: 6px;
+            }
+
+            QScrollBar::handle:vertical {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 rgba(190, 140, 165, 0.6),
+                    stop:1 rgba(215, 130, 165, 0.55));
+                border-radius: 7px;
+                min-height: 40px;
+            }
+
+            QScrollBar::handle:vertical:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 rgba(215, 130, 165, 0.7),
+                    stop:1 rgba(235, 145, 190, 0.65));
+            }
+
+            QScrollBar:horizontal {
+                background: rgba(248, 235, 243, 0.35);
+                height: 22px;
+                border-radius: 8px;
+                margin: 6px;
+            }
+
+            QScrollBar::handle:horizontal {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(190, 140, 165, 0.6),
+                    stop:1 rgba(215, 130, 165, 0.55));
+                border-radius: 7px;
+                min-width: 40px;
+            }
+
+            QScrollBar::handle:horizontal:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(215, 130, 165, 0.7),
+                    stop:1 rgba(235, 145, 190, 0.65));
+            }
+
+            QScrollBar::add-line, QScrollBar::sub-line {
+                background: none;
+                border: none;
+            }
+
+            /* 状态栏样式 */
+            QStatusBar {
+                background: rgba(248, 235, 243, 0.75);
+                border-top: 1px solid rgba(230, 200, 215, 0.4);
+                padding: 5px;
+                color: #8b6c7d;
+            }
+
+            /* 工具提示样式 */
+            QToolTip {
+                background: rgba(255, 252, 254, 0.96);
+                border: 1px solid rgba(215, 130, 165, 0.5);
+                border-radius: 8px;
+                padding: 7px;
+                color: #5a3a47;
+            }
+
+            /* 菜单样式 */
+            QMenu {
+                background: rgba(255, 252, 254, 0.96);
+                border: 1px solid rgba(230, 200, 215, 0.5);
+                border-radius: 10px;
+                padding: 5px;
+            }
+
+            QMenu::item {
+                padding: 7px 24px 7px 18px;
+                border-radius: 5px;
+            }
+
+            QMenu::item:selected {
+                background: rgba(235, 145, 190, 0.25);
+            }
+
+            QMenu::separator {
+                height: 1px;
+                background: rgba(230, 200, 215, 0.35);
+                margin: 5px 10px;
+            }
+
+            /* 复选框和单选框样式 */
+            QCheckBox::indicator, QRadioButton::indicator {
+                width: 18px;
+                height: 18px;
+                border-radius: 4px;
+                border: 1px solid rgba(230, 200, 215, 0.6);
+                background: rgba(255, 252, 254, 0.85);
+            }
+
+            QRadioButton::indicator {
+                border-radius: 9px;
+            }
+
+            QCheckBox::indicator:checked, QRadioButton::indicator:checked {
+                background: rgba(215, 130, 165, 0.85);
+                border: 1px solid rgba(215, 130, 165, 0.7);
+            }
+
+            /* 进度条样式 */
+            QProgressBar {
+                background: rgba(248, 235, 243, 0.6);
+                border: 1px solid rgba(230, 200, 215, 0.4);
+                border-radius: 8px;
+                text-align: center;
+                color: #5a3a47;
+                font-weight: 600;
+            }
+
+            QProgressBar::chunk {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 rgba(215, 130, 165, 0.75),
+                    stop:1 rgba(235, 145, 190, 0.85));
+                border-radius: 7px;
+            }
+
+            /* 对话框样式 - 统一玻璃质感 */
+            QDialog {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(255, 248, 252, 0.92),
+                    stop:0.5 rgba(254, 242, 248, 0.88),
+                    stop:1 rgba(252, 238, 245, 0.85));
+                border: 1px solid rgba(230, 200, 215, 0.6);
+                border-radius: 12px;
+            }
+
+            QDialog QLabel {
+                color: #5a3a47;
+            }
+
+            QDialog QLabel[heading="true"] {
+                font-size: 10pt;
+                font-weight: 700;
+                color: #8b4f6f;
+            }
+        """
+        )
+
+        self.log_manager.info("✨ 玻璃化主题已应用")
+
+    def apply_shadow_effects(self):
+        """为关键面板添加阴影效果"""
+        from PySide6.QtWidgets import QGraphicsDropShadowEffect, QGroupBox
+        from PySide6.QtGui import QColor
+
+        # 为所有QGroupBox添加阴影
+        for groupbox in self.findChildren(QGroupBox):
+            shadow = QGraphicsDropShadowEffect()
+            shadow.setBlurRadius(18)
+            shadow.setColor(QColor(0, 0, 0, 40))  # 16%透明度的黑色
+            shadow.setOffset(0, 4)
+            groupbox.setGraphicsEffect(shadow)
+
+        self.log_manager.info("✨ 阴影效果已应用")
 
     def create_navigator_panel(self, parent_splitter):
         """创建左侧导航面板"""
         nav_widget = QWidget()
         nav_layout = QVBoxLayout(nav_widget)
-
-        # 工作表浏览器
-        sheet_group = QGroupBox("工作表浏览器")
-        sheet_layout = QVBoxLayout(sheet_group)
-
-        self.sheet_explorer = DragDropTreeView()
-        # 移除高度限制，让控件自动填满空间
-        sheet_layout.addWidget(self.sheet_explorer)
-
-        nav_layout.addWidget(sheet_group)
 
         # 分类摘要区域
         summary_group = QGroupBox("📋 分类摘要")
@@ -1323,116 +2385,138 @@ class MainWindow(QMainWindow):
         # 移除高度限制，让控件自动填满空间
         self.classification_summary.setReadOnly(True)
         # 移除灰色背景，使用简洁样式
-        self.classification_summary.setStyleSheet("""
+        self.classification_summary.setStyleSheet(
+            """
             QTextEdit {
                 border: 1px solid #dee2e6;
                 border-radius: 4px;
                 padding: 5px;
-                font-size: 12px;
+                font-size: 16px;
             }
-        """)
+        """
+        )
         self.classification_summary.setText("请先加载Excel文件并确认工作表分类")
         summary_layout.addWidget(self.classification_summary)
 
         nav_layout.addWidget(summary_group)
 
         # 目标项结构树
-        target_group = QGroupBox("🎯 目标项结构")
+        target_group = QGroupBox("🎯 目标项来源详情")
         target_layout = QVBoxLayout(target_group)
 
-        # 导航工具栏
-        nav_toolbar = QHBoxLayout()
+        self.target_source_description = QLabel(
+            "请选择中间主表中的目标项，即可在此查看来源明细。"
+        )
+        self.target_source_description.setWordWrap(True)
+        self.target_source_description.setStyleSheet("color: #555; font-size: 12px;")
+        self._target_source_description_default = self.target_source_description.text()
+        target_layout.addWidget(self.target_source_description)
 
-        # 分类筛选下拉框
-        self.category_filter = QComboBox()
-        self.category_filter.addItem("全部分类")
-        self.category_filter.currentTextChanged.connect(self.filter_by_category)
-        nav_toolbar.addWidget(QLabel("分类:"))
-        nav_toolbar.addWidget(self.category_filter)
+        self.target_source_stack = QStackedWidget()
 
-        # 搜索框
-        self.target_search = QLineEdit()
-        self.target_search.setPlaceholderText("搜索目标项...")
-        self.target_search.textChanged.connect(self.search_target_items)
-        nav_toolbar.addWidget(self.target_search)
+        # 消息页
+        message_widget = QWidget()
+        message_layout = QVBoxLayout(message_widget)
+        message_layout.setContentsMargins(8, 8, 8, 8)
+        self.target_source_message = QLabel("尚未选中任何目标项。")
+        self.target_source_message.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self.target_source_message.setWordWrap(True)
+        self.target_source_message.setStyleSheet("color: #666;")
+        message_layout.addWidget(self.target_source_message)
+        message_layout.addStretch()
+        self._target_source_message_index = self.target_source_stack.addWidget(
+            message_widget
+        )
 
-        # 导航按钮
-        self.expand_all_btn = QPushButton("🔽")
-        self.expand_all_btn.setToolTip("展开所有分类")
-        self.expand_all_btn.setMaximumWidth(30)
-        self.expand_all_btn.clicked.connect(self.expand_all_categories)
-        nav_toolbar.addWidget(self.expand_all_btn)
+        # 表格页
+        table_container = QWidget()
+        table_layout = QVBoxLayout(table_container)
+        table_layout.setContentsMargins(0, 0, 0, 0)
+        self.target_source_table = QTableWidget()
+        self.target_source_table.setColumnCount(0)
+        self.target_source_table.setRowCount(0)
+        self.target_source_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.target_source_table.setSelectionMode(QAbstractItemView.NoSelection)
+        self.target_source_table.setFocusPolicy(Qt.NoFocus)
 
-        self.collapse_all_btn = QPushButton("🔼")
-        self.collapse_all_btn.setToolTip("折叠所有分类")
-        self.collapse_all_btn.setMaximumWidth(30)
-        self.collapse_all_btn.clicked.connect(self.collapse_all_categories)
-        nav_toolbar.addWidget(self.collapse_all_btn)
+        # 🔧 修复：设置按像素滚动而非按项目滚动
+        self.target_source_table.setHorizontalScrollMode(
+            QAbstractItemView.ScrollPerPixel
+        )
+        self.target_source_table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
 
-        target_layout.addLayout(nav_toolbar)
+        header = self.target_source_table.horizontalHeader()
+        ensure_interactive_header(header, stretch_last=True)
+        header.setSectionResizeMode(QHeaderView.Interactive)
 
-        self.item_structure_tree = DragDropTreeView()
-        self.item_structure_tree.setHeaderHidden(False)
-        self.item_structure_tree.setRootIsDecorated(True)
-        self.item_structure_tree.setAlternatingRowColors(True)
-        self.item_structure_tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.item_structure_tree.setDragDropMode(QAbstractItemView.DragOnly)
+        # ⭐ 垂直表头：允许用户拖动修改行高，默认30px
+        v_header = self.target_source_table.verticalHeader()
+        v_header.setSectionResizeMode(QHeaderView.Interactive)  # 允许拖动
+        v_header.setDefaultSectionSize(30)  # 默认行高30px
+        v_header.setMinimumSectionSize(20)  # 最小行高20px
 
-        # 连接导航信号
-        self.item_structure_tree.clicked.connect(self.on_target_item_clicked)
-        self.item_structure_tree.doubleClicked.connect(self.on_target_item_double_clicked)
+        ensure_word_wrap(
+            self.target_source_table, track_header=False
+        )  # 禁用自动行高调整
+        # 应用统一的网格线样式
+        self.target_source_table.setStyleSheet(TABLE_GRID_STYLE)
+        self.target_source_table.setShowGrid(True)  # 确保显示网格线
+        table_layout.addWidget(self.target_source_table)
+        self._target_source_table_index = self.target_source_stack.addWidget(
+            table_container
+        )
 
-        target_layout.addWidget(self.item_structure_tree)
+        target_layout.addWidget(self.target_source_stack)
 
         nav_layout.addWidget(target_group)
 
         # 设置布局拉伸因子，让控件合理分配空间
-        nav_layout.setStretchFactor(sheet_group, 1)      # 工作表浏览器占1/4空间
-        nav_layout.setStretchFactor(summary_group, 1)    # 分类摘要占1/4空间
-        nav_layout.setStretchFactor(target_group, 2)     # 目标项结构占1/2空间
+        nav_layout.setStretchFactor(summary_group, 1)  # 分类摘要占1/3空间
+        nav_layout.setStretchFactor(target_group, 2)  # 目标项结构占2/3空间
 
         parent_splitter.addWidget(nav_widget)
 
     def create_workbench_panel(self, parent_splitter):
         """创建中央工作台面板"""
+        # 创建垂直分割器，上方是主操作表格，下方是目标项来源详情
+        vertical_splitter = QSplitter(Qt.Vertical)
+
+        # ========== 上方：主操作区域 ==========
         workbench_widget = QWidget()
         workbench_layout = QVBoxLayout(workbench_widget)
 
         # 工具栏
         tools_layout = QHBoxLayout()
         self.load_files_btn = QPushButton("📁 加载文件")
-        self.extract_data_btn = QPushButton("📊 提取数据")
         self.ai_analyze_btn = QPushButton("🤖 AI分析")
-        self.calculate_btn = QPushButton("🧮 计算预览")
+        self.ai_assistant_btn = QPushButton("💬 AI分析助手")  # 新增 AI 对话助手按钮
+        self.calculate_btn = QPushButton("🔁 重算所有数值")
         self.export_btn = QPushButton("💾 导出Excel")
+        self.help_btn = QPushButton("❓ 帮助")
+        self.clear_sheet_formulas_btn = QPushButton("🗑️ 清除工作表公式")
+        self.clear_all_formulas_btn = QPushButton("🗑️ 清除所有公式")
 
-        # 设置按钮样式 - 移除灰色背景
-        for btn in [self.load_files_btn, self.extract_data_btn,
-                   self.ai_analyze_btn, self.calculate_btn, self.export_btn]:
+        # 设置按钮样式 - 继承全局玻璃化样式
+        for btn in [
+            self.load_files_btn,
+            self.ai_analyze_btn,
+            self.ai_assistant_btn,
+            self.calculate_btn,
+            self.export_btn,
+            self.help_btn,
+            self.clear_sheet_formulas_btn,
+            self.clear_all_formulas_btn,
+        ]:
             btn.setMinimumHeight(35)
-            btn.setStyleSheet("""
-                QPushButton {
-                    border: 1px solid #ccc;
-                    border-radius: 4px;
-                    padding: 5px 15px;
-                    font-weight: bold;
-                }
-                QPushButton:hover {
-                    background-color: #e0e0e0;
-                }
-                QPushButton:pressed {
-                    background-color: #d0d0d0;
-                }
-                QPushButton:disabled {
-                    color: #999;
-                }
-            """)
 
         tools_layout.addWidget(self.load_files_btn)
-        tools_layout.addWidget(self.extract_data_btn)
         tools_layout.addWidget(self.ai_analyze_btn)
+        tools_layout.addWidget(self.ai_assistant_btn)
         tools_layout.addWidget(self.calculate_btn)
         tools_layout.addWidget(self.export_btn)
+        tools_layout.addWidget(self.help_btn)
+        tools_layout.addWidget(self.clear_sheet_formulas_btn)
+        tools_layout.addWidget(self.clear_all_formulas_btn)
         tools_layout.addStretch()
 
         # 进度条
@@ -1442,19 +2526,93 @@ class MainWindow(QMainWindow):
 
         workbench_layout.addLayout(tools_layout)
 
+        # 主数据表工具栏
+        table_toolbar_layout = QVBoxLayout()
+
+        # 第一行：工作表选择
+        sheet_select_layout = QHBoxLayout()
+        target_sheet_label = QLabel("选择工作表:")
+        target_sheet_label.setStyleSheet("font-size: 12pt;")
+        self.target_sheet_combo = QComboBox()
+        self.target_sheet_combo.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Preferred
+        )
+        self.target_sheet_combo.setMinimumWidth(200)
+        self.target_sheet_combo.setMinimumHeight(35)  # 设置下拉框最小高度为35px
+        self.target_sheet_combo.currentTextChanged.connect(self.on_target_sheet_changed)
+        sheet_select_layout.addWidget(target_sheet_label)
+        sheet_select_layout.addWidget(self.target_sheet_combo)
+
+        # 全屏显示按钮
+        self.fullscreen_btn = QPushButton("🖥️ 全屏显示")
+        self.fullscreen_btn.setMinimumHeight(35)  # 统一按钮高度为35px
+        self.fullscreen_btn.setCheckable(True)  # 设置为可切换按钮
+        self.fullscreen_btn.clicked.connect(self.toggle_fullscreen)
+        self.fullscreen_btn.setToolTip("全屏显示主表格和来源详情（隐藏其他面板）")
+        self.fullscreen_btn.setStyleSheet(
+            """
+            QPushButton {
+                padding: 5px 15px;
+                border-radius: 5px;
+            }
+            QPushButton:checked {
+                background-color: #4CAF50;
+                color: white;
+                font-weight: bold;
+            }
+        """
+        )
+        sheet_select_layout.addWidget(self.fullscreen_btn)
+
+        sheet_select_layout.addStretch()
+        table_toolbar_layout.addLayout(sheet_select_layout)
+
+        # 第二行：搜索框和展示列按钮（4:1布局）
+        search_layout = QHBoxLayout()
+        self.target_search_line = QLineEdit()
+        self.target_search_line.setPlaceholderText("搜索待写入项...")
+        self.target_search_line.setMinimumHeight(35)  # 设置搜索框最小高度为35px
+        self.target_search_line.textChanged.connect(self.filter_target_items)
+        self.target_column_config_btn = QPushButton("⚙️ 数据列设置")
+        self.target_column_config_btn.setToolTip(
+            "配置数据列的显示顺序、可见性和可编辑性"
+        )
+        self.target_column_config_btn.setMinimumHeight(35)  # 按钮也设置相同高度
+        self.target_column_config_btn.setEnabled(False)
+        self.target_column_config_btn.clicked.connect(self.open_target_column_config)
+
+        # 搜索框和按钮按4:1比例分配
+        search_layout.addWidget(self.target_search_line, 4)
+        search_layout.addWidget(self.target_column_config_btn, 1)
+        table_toolbar_layout.addLayout(search_layout)
+
+        workbench_layout.addLayout(table_toolbar_layout)
+
         # 主数据网格
         self.main_data_grid = DragDropTreeView()
+        self.main_data_grid._is_main_grid = True  # 标记为主数据网格
         self.main_data_grid.setAlternatingRowColors(True)
         self.main_data_grid.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.main_data_grid.setRootIsDecorated(False)
         self.main_data_grid.setAcceptDrops(True)
+
+        # ⭐ 启用自动行高适应（QTreeView不支持verticalHeader，使用setUniformRowHeights）
+        self.main_data_grid.setWordWrap(True)  # 允许单元格内换行
+        self.main_data_grid.setUniformRowHeights(
+            False
+        )  # 允许不同行有不同高度（QTreeView专用）
+
+        # 🔧 设置搜索高亮delegate，覆盖CSS样式
+        self.search_highlight_delegate = SearchHighlightDelegate(self.main_data_grid)
+        self.main_data_grid.setItemDelegate(self.search_highlight_delegate)
 
         # 设置右键菜单
         self.main_data_grid.setContextMenuPolicy(Qt.CustomContextMenu)
         self.main_data_grid.customContextMenuRequested.connect(self.show_context_menu)
 
         # 设置网格样式 - 移除灰色背景
-        self.main_data_grid.setStyleSheet("""
+        self.main_data_grid.setStyleSheet(
+            """
             QTreeView {
                 gridline-color: #d0d0d0;
                 selection-background-color: #4CAF50;
@@ -1467,11 +2625,247 @@ class MainWindow(QMainWindow):
             QTreeView::item:selected {
                 background-color: #4CAF50;
             }
-        """)
+        """
+        )
 
         workbench_layout.addWidget(self.main_data_grid)
 
-        parent_splitter.addWidget(workbench_widget)
+        # 添加主操作区域到垂直分割器
+        vertical_splitter.addWidget(workbench_widget)
+
+        # ========== 下方：目标项来源详情（转置显示） ==========
+        target_detail_group = QGroupBox("🎯 目标项来源详情")
+        target_detail_layout = QVBoxLayout(target_detail_group)
+
+        self.target_source_description = QLabel(
+            "请选择上方主表中的目标项，即可在此查看来源明细。"
+        )
+        self.target_source_description.setWordWrap(True)
+        self.target_source_description.setStyleSheet("color: #555; font-size: 12px;")
+        self._target_source_description_default = self.target_source_description.text()
+        target_detail_layout.addWidget(self.target_source_description)
+
+        self.target_source_stack = QStackedWidget()
+
+        # 消息页
+        message_widget = QWidget()
+        message_layout = QVBoxLayout(message_widget)
+        message_layout.setContentsMargins(8, 8, 8, 8)
+        self.target_source_message = QLabel("尚未选中任何目标项。")
+        self.target_source_message.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self.target_source_message.setWordWrap(True)
+        self.target_source_message.setStyleSheet("color: #666;")
+        message_layout.addWidget(self.target_source_message)
+        message_layout.addStretch()
+        self._target_source_message_index = self.target_source_stack.addWidget(
+            message_widget
+        )
+
+        # 表格页（转置显示：列头为属性，行为不同来源）
+        table_container = QWidget()
+        table_layout = QVBoxLayout(table_container)
+        table_layout.setContentsMargins(0, 0, 0, 0)
+        self.target_source_table = AutoResizeTableWidget()
+        # 设置列宽约束
+        self.target_source_table.set_column_constraints(
+            min_widths={i: 80 for i in range(10)},  # 所有列最小宽度80
+            max_widths={i: 420 for i in range(10)},  # 所有列最大宽度420
+        )
+        self.target_source_table.setColumnCount(0)
+        self.target_source_table.setRowCount(0)
+        self.target_source_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.target_source_table.setSelectionMode(QAbstractItemView.NoSelection)
+        self.target_source_table.setFocusPolicy(Qt.NoFocus)
+
+        # 🔧 修复：设置按像素滚动而非按项目滚动
+        self.target_source_table.setHorizontalScrollMode(
+            QAbstractItemView.ScrollPerPixel
+        )
+        self.target_source_table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+
+        header = self.target_source_table.horizontalHeader()
+        ensure_interactive_header(header, stretch_last=True)
+        header.setSectionResizeMode(QHeaderView.Interactive)
+
+        # ⭐ 垂直表头：允许用户拖动修改行高，默认50px
+        v_header = self.target_source_table.verticalHeader()
+        v_header.setSectionResizeMode(QHeaderView.Interactive)  # 允许拖动
+        v_header.setDefaultSectionSize(50)  # 默认行高50px（已修正）
+        v_header.setMinimumSectionSize(40)  # 最小行高40px
+
+        ensure_word_wrap(
+            self.target_source_table, track_header=False
+        )  # 禁用自动行高调整
+        # 应用统一的网格线样式
+        self.target_source_table.setStyleSheet(TABLE_GRID_STYLE)
+        self.target_source_table.setShowGrid(True)  # 确保显示网格线
+
+        table_layout.addWidget(self.target_source_table)
+        self._target_source_table_index = self.target_source_stack.addWidget(
+            table_container
+        )
+
+        target_detail_layout.addWidget(self.target_source_stack)
+
+        # 添加目标项详情到垂直分割器
+        vertical_splitter.addWidget(target_detail_group)
+
+        # 设置垂直分割器比例（上方主表占大部分空间）
+        vertical_splitter.setStretchFactor(0, 3)
+        vertical_splitter.setStretchFactor(1, 1)
+        vertical_splitter.setSizes([600, 200])
+
+        # 添加垂直分割器到父分割器
+        parent_splitter.addWidget(vertical_splitter)
+
+    def _ensure_target_column_config(self):
+        if not hasattr(self, "target_model") or not self.target_model:
+            return
+
+        # 定义默认只读列
+        readonly_columns = ["项目", "行次", "状态", "级别"]
+
+        # ✅ 优先从workbook_manager加载保存的配置
+        if (
+            not self._target_column_config
+            and self.workbook_manager
+            and self.target_model.active_sheet_name
+            and self.target_model.active_sheet_name
+            in self.workbook_manager.column_configs
+        ):
+
+            self._target_column_config = self.workbook_manager.column_configs[
+                self.target_model.active_sheet_name
+            ]
+            # 确保所有配置项都有editable字段
+            for config in self._target_column_config:
+                if "editable" not in config:
+                    config["editable"] = config["name"] not in readonly_columns
+            return
+
+        if not self._target_column_config:
+            self._target_column_config = [
+                {
+                    "name": header,
+                    "enabled": True,
+                    "editable": header not in readonly_columns,  # 默认可编辑性
+                }
+                for header in getattr(self.target_model, "headers", [])
+            ]
+        else:
+            # 向后兼容：为已有配置添加 editable 字段
+            for config in self._target_column_config:
+                if "editable" not in config:
+                    config["editable"] = config["name"] not in readonly_columns
+
+    def open_target_column_config(self):
+        if not hasattr(self, "target_model") or not self.target_model:
+            QMessageBox.information(self, "提示", "请先加载并提取数据。")
+            return
+
+        headers = list(getattr(self.target_model, "headers", []))
+        if not headers:
+            QMessageBox.information(self, "提示", "当前没有可配置的列。")
+            return
+
+        self._ensure_target_column_config()
+
+        # ✅ 同步当前表格的真实状态到配置
+        header_view = self.main_data_grid.header()
+        name_to_index = {name: idx for idx, name in enumerate(headers)}
+
+        for config in self._target_column_config:
+            column_name = config.get("name")
+            column_index = name_to_index.get(column_name)
+
+            if column_index is not None:
+                # 读取当前列的显示状态
+                config["enabled"] = not header_view.isSectionHidden(column_index)
+
+                # 读取当前列的可编辑状态
+                if self.target_model.editable_columns_set:
+                    config["editable"] = (
+                        column_name in self.target_model.editable_columns_set
+                    )
+                else:
+                    # 如果没有配置，使用默认只读列表
+                    readonly_columns = ["项目", "行次", "状态", "级别"]
+                    config["editable"] = column_name not in readonly_columns
+
+        dialog = ColumnConfigDialog(headers, self._target_column_config, self)
+        if dialog.exec() == QDialog.Accepted:
+            self._target_column_config = dialog.get_selection()
+            self.apply_target_column_config()
+
+    def apply_target_column_config(self):
+        if not hasattr(self, "target_model") or not self.target_model:
+            return
+
+        headers = list(getattr(self.target_model, "headers", []))
+        if not headers:
+            return
+
+        self._ensure_target_column_config()
+
+        header_view = self.main_data_grid.header()
+        name_to_index = {name: idx for idx, name in enumerate(headers)}
+
+        ordered_entries: List[Dict[str, Any]] = []
+        seen = set()
+        for entry in self._target_column_config or []:
+            name = entry.get("name")
+            if name in name_to_index and name not in seen:
+                ordered_entries.append(entry)
+                seen.add(name)
+
+        for name in headers:
+            if name not in seen:
+                ordered_entries.append({"name": name, "enabled": True})
+
+        for target_pos, entry in enumerate(ordered_entries):
+            name = entry.get("name")
+            enabled = entry.get("enabled", True)
+            column_index = name_to_index.get(name)
+            if column_index is None:
+                continue
+
+            current_visual = header_view.visualIndex(column_index)
+            if current_visual != target_pos:
+                header_view.moveSection(current_visual, target_pos)
+
+            header_view.setSectionHidden(column_index, not enabled)
+
+        # ✅ 更新模型的可编辑列配置
+        self.target_model.set_editable_columns(self._target_column_config)
+
+        # ✅ 保存列配置到workbook_manager以便持久化
+        if self.workbook_manager and self.target_model.active_sheet_name:
+            self.workbook_manager.column_configs[
+                self.target_model.active_sheet_name
+            ] = self._target_column_config
+
+        self._apply_main_header_layout()
+
+    def schedule_autosave(self, delay_ms: int = 800):
+        """调度自动保存映射公式"""
+        if self._autosave_suspended or not self.workbook_manager:
+            return
+
+        if self._autosave_timer.isActive():
+            self._autosave_timer.stop()
+
+        self._autosave_timer.start(max(100, delay_ms))
+
+    def _perform_autosave(self):
+        """执行映射公式自动保存"""
+        if not self.workbook_manager or not self.file_manager:
+            return
+
+        success = self.file_manager.save_mapping_formulas(self.workbook_manager)
+        if success:
+            self.log_manager.info("📝 映射公式已自动保存")
+        else:
+            self.log_manager.warning("⚠️ 自动保存映射公式失败")
 
     def create_tools_panel(self, parent_splitter):
         """创建右侧工具面板"""
@@ -1487,6 +2881,10 @@ class MainWindow(QMainWindow):
         self.source_tree.setDragEnabled(True)
         self.source_tree.setAcceptDrops(False)
 
+        # 🔧 修复：为来源项库应用SearchHighlightDelegate，确保搜索高亮可见
+        self.source_highlight_delegate = SearchHighlightDelegate(self.source_tree)
+        self.source_tree.setItemDelegate(self.source_highlight_delegate)
+
         # 使用SearchableSourceTree内置的搜索组件（包含下拉菜单）
         source_search_widget = self.source_tree.get_search_widget()
         source_layout.addWidget(source_search_widget)
@@ -1496,19 +2894,43 @@ class MainWindow(QMainWindow):
 
         tools_widget.addTab(source_library_widget, "📚 来源项库")
 
-        # 选项卡二：公式检查器
-        formula_inspector_widget = QWidget()
-        inspector_layout = QVBoxLayout(formula_inspector_widget)
+        # 选项卡二：分类摘要
+        summary_widget = QWidget()
+        summary_layout = QVBoxLayout(summary_widget)
 
-        # 公式编辑器标题
+        self.classification_summary = QTextEdit()
+        self.classification_summary.setReadOnly(True)
+        self.classification_summary.setStyleSheet(
+            """
+            QTextEdit {
+                border: 1px solid #dee2e6;
+                border-radius: 4px;
+                padding: 5px;
+                font-size: 16px;
+            }
+        """
+        )
+        self.classification_summary.setText("请先加载Excel文件并确认工作表分类")
+        summary_layout.addWidget(self.classification_summary)
+
+        tools_widget.addTab(summary_widget, "📋 分类摘要")
+
+        # 选项卡三：单元格检查
+        cell_inspector_widget = QWidget()
+        cell_layout = QVBoxLayout(cell_inspector_widget)
+        cell_layout.setSpacing(12)
+
+        header_layout = QHBoxLayout()
         formula_label = QLabel("公式编辑器")
         formula_label.setFont(QFont("", 10, QFont.Bold))
-        inspector_layout.addWidget(formula_label)
+        header_layout.addWidget(formula_label)
+        header_layout.addStretch()
+        cell_layout.addLayout(header_layout)
 
-        # 高级公式编辑器
         self.formula_editor = FormulaEditor()
-        self.formula_editor.setMaximumHeight(120)
-        self.formula_editor.setStyleSheet("""
+        self.formula_editor.setMaximumHeight(140)
+        self.formula_editor.setStyleSheet(
+            """
             QTextEdit {
                 border: 2px solid #ddd;
                 border-radius: 4px;
@@ -1519,19 +2941,19 @@ class MainWindow(QMainWindow):
             QTextEdit:focus {
                 border-color: #4CAF50;
             }
-        """)
+        """
+        )
+        cell_layout.addWidget(self.formula_editor)
 
-        inspector_layout.addWidget(self.formula_editor)
-
-        # 公式工具按钮
         formula_tools_layout = QHBoxLayout()
         validate_formula_btn = QPushButton("✅ 验证")
         clear_formula_btn = QPushButton("🗑️ 清空")
         insert_example_btn = QPushButton("💡 示例")
 
         for btn in [validate_formula_btn, clear_formula_btn, insert_example_btn]:
-            btn.setMaximumHeight(25)
-            btn.setStyleSheet("""
+            btn.setMaximumHeight(26)
+            btn.setStyleSheet(
+                """
                 QPushButton {
                     border: 1px solid #dee2e6;
                     border-radius: 3px;
@@ -1539,990 +2961,47 @@ class MainWindow(QMainWindow):
                     font-size: 10px;
                 }
                 QPushButton:hover {
-                    background-color: #e9ecef;
+                    background-color: rgba(100, 149, 237, 0.15);
                 }
-            """)
+            """
+            )
+
+        validate_formula_btn.clicked.connect(self.validate_formula)
+        clear_formula_btn.clicked.connect(self.clear_formulas)
+        insert_example_btn.clicked.connect(self.insert_formula_example)
 
         formula_tools_layout.addWidget(validate_formula_btn)
         formula_tools_layout.addWidget(clear_formula_btn)
         formula_tools_layout.addWidget(insert_example_btn)
         formula_tools_layout.addStretch()
+        cell_layout.addLayout(formula_tools_layout)
 
-        inspector_layout.addLayout(formula_tools_layout)
+        property_header = QLabel("属性信息")
+        property_header.setFont(QFont("", 10, QFont.Bold))
+        cell_layout.addWidget(property_header)
 
-        # AI配置组
-        ai_config_group = QGroupBox("🤖 AI配置")
-        ai_config_layout = QVBoxLayout(ai_config_group)
+        self.property_table = PropertyTableWidget()
+        self.property_table.set_properties({})
+        cell_layout.addWidget(self.property_table)
+        cell_layout.addStretch()
 
-        # AI配置显示信息
-        self.ai_config_info = QLabel("点击按钮打开完整AI配置...")
-        self.ai_config_info.setStyleSheet("color: #666; font-style: italic;")
-        ai_config_layout.addWidget(self.ai_config_info)
-
-        # 快速配置（保留基本字段）
-        quick_config_layout = QFormLayout()
-
-        self.ai_url_edit = QLineEdit("https://api.openai.com/v1/chat/completions")
-        self.ai_key_edit = QLineEdit()
-        self.ai_key_edit.setEchoMode(QLineEdit.Password)
-        self.ai_key_edit.setPlaceholderText("输入API密钥...")
-        self.ai_model_edit = QLineEdit("gpt-4")
-
-        quick_config_layout.addRow("API URL:", self.ai_url_edit)
-        quick_config_layout.addRow("API Key:", self.ai_key_edit)
-        quick_config_layout.addRow("模型:", self.ai_model_edit)
-
-        ai_config_layout.addLayout(quick_config_layout)
-
-        # AI配置按钮
-        ai_buttons_layout = QHBoxLayout()
-
-        self.ai_config_btn = QPushButton("🛠️ 完整配置")
-        self.ai_config_btn.setToolTip("打开完整的AI配置界面，支持所有OpenAI参数")
-        self.ai_config_btn.clicked.connect(self.open_ai_config_dialog)
-        ai_buttons_layout.addWidget(self.ai_config_btn)
-
-        self.ai_test_btn = QPushButton("🔗 快速测试")
-        self.ai_test_btn.setToolTip("使用当前配置快速测试AI连接")
-        self.ai_test_btn.clicked.connect(self.quick_test_ai)
-        ai_buttons_layout.addWidget(self.ai_test_btn)
-
-        ai_config_layout.addLayout(ai_buttons_layout)
-
-        inspector_layout.addWidget(ai_config_group)
-        inspector_layout.addStretch()
-
-        tools_widget.addTab(formula_inspector_widget, "🔧 公式检查器")
-
-        # 选项卡三：属性检查器
-        self.property_inspector = PropertyInspector()
-        tools_widget.addTab(self.property_inspector, "🔍 属性检查器")
-
-        # 选项卡四：AI配置
-        ai_config_widget = self.create_ai_config_tab()
-        tools_widget.addTab(ai_config_widget, "🤖 AI配置")
+        tools_widget.addTab(cell_inspector_widget, "📋 单元格检查")
 
         parent_splitter.addWidget(tools_widget)
-
-    # ==================== AI Client Class ====================
-
-    def create_ai_config_tab(self):
-        """创建AI配置选项卡 - 重构为聊天界面"""
-        ai_widget = QWidget()
-        ai_layout = QVBoxLayout(ai_widget)
-
-        # 标题和说明
-        title_label = QLabel("🤖 AI聊天助手")
-        title_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #2c3e50; margin-bottom: 10px;")
-        ai_layout.addWidget(title_label)
-
-        # ==================== 基础连接配置 (始终可见) ====================
-        basic_group = QGroupBox("📡 基础连接配置")
-        basic_layout = QVBoxLayout(basic_group)
-
-        # API URL (不使用ParameterControl，始终需要)
-        url_layout = QHBoxLayout()
-        url_layout.addWidget(QLabel("API地址:"))
-        self.ai_url_edit = QLineEdit("https://api.kkyyxx.xyz/v1/chat/completions")
-        self.ai_url_edit.setPlaceholderText("输入API服务地址...")
-        url_layout.addWidget(self.ai_url_edit)
-        basic_layout.addLayout(url_layout)
-
-        # API Key (不使用ParameterControl，始终需要)
-        key_layout = QHBoxLayout()
-        key_layout.addWidget(QLabel("API密钥:"))
-        self.ai_key_edit = QLineEdit("UFXLzCFM2BtvfvAc1ZC5zRkJLPJKvFlKeBKYfI5evJNqMO7t")
-        self.ai_key_edit.setEchoMode(QLineEdit.Password)
-        self.ai_key_edit.setPlaceholderText("输入API密钥...")
-        key_layout.addWidget(self.ai_key_edit)
-        basic_layout.addLayout(key_layout)
-
-        ai_layout.addWidget(basic_group)
-
-        # ==================== 高级参数配置折叠块 ====================
-        # 创建CollapsibleGroupBox，默认折叠
-        self.unified_params_group = CollapsibleGroupBox("⚙️ 高级参数配置")
-        self.unified_params_group.setChecked(False)  # 默认折叠
-        
-        # 滚动区域用于参数
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_widget = QWidget()
-        scroll_layout = QVBoxLayout(scroll_widget)
-
-        # 存储所有参数控件的字典
-        self.ai_parameters = {}
-
-        # ==================== Model参数 (必需参数) ====================
-        model_group = QGroupBox("🎯 模型配置")
-        model_layout = QVBoxLayout(model_group)
-
-        self.ai_parameters['model'] = TextParameterControl(
-            "model", "模型名称", "要使用的模型ID", "gemini-2.5-pro",
-            "例如: gpt-4, gpt-3.5-turbo, gemini-2.5-pro"
-        )
-        self.ai_parameters['model'].set_enabled(True)  # 默认启用
-        model_layout.addWidget(self.ai_parameters['model'])
-        scroll_layout.addWidget(model_group)
-
-        # ==================== 核心参数配置 ====================
-        core_group = QGroupBox("⚙️ 核心参数配置")
-        core_layout = QVBoxLayout(core_group)
-
-        # Temperature
-        self.ai_parameters['temperature'] = NumericParameterControl(
-            "temperature", "Temperature", "采样温度，控制响应随机性。较高值使输出更随机，较低值更确定性",
-            1.0, 0.0, 2.0, 2, 0.01
-        )
-        core_layout.addWidget(self.ai_parameters['temperature'])
-
-        # Top P
-        self.ai_parameters['top_p'] = NumericParameterControl(
-            "top_p", "Top P", "核采样参数，考虑具有top_p概率质量的标记",
-            1.0, 0.0, 1.0, 2, 0.01
-        )
-        core_layout.addWidget(self.ai_parameters['top_p'])
-
-        # Max Tokens
-        self.ai_parameters['max_tokens'] = NumericParameterControl(
-            "max_tokens", "Max Tokens", "聊天补全中可以生成的最大标记数",
-            4000, 1, 8192, 0, 1
-        )
-        core_layout.addWidget(self.ai_parameters['max_tokens'])
-
-        # Stream
-        self.ai_parameters['stream'] = BooleanParameterControl(
-            "stream", "流式输出", "是否启用流式响应", False
-        )
-        core_layout.addWidget(self.ai_parameters['stream'])
-
-        scroll_layout.addWidget(core_group)
-
-        # ==================== 其他参数 ====================
-        # 添加其他参数（惩罚、高级、格式、系统配置等）
-        # ... 这里可以保留原有的其他参数配置 ...
-
-        # 设置滚动区域内容并添加到折叠块
-        scroll_area.setWidget(scroll_widget)
-        self.unified_params_group.add_widget(scroll_area)
-        
-        ai_layout.addWidget(self.unified_params_group)
-
-        # ==================== 聊天对话区域 ====================
-        chat_group = QGroupBox("💬 AI对话")
-        chat_layout = QVBoxLayout(chat_group)
-
-        # 聊天历史显示区域
-        self.chat_scroll_area = ChatScrollArea()
-        self.chat_scroll_area.setMinimumHeight(300)
-        chat_layout.addWidget(self.chat_scroll_area)
-
-        # 系统提示设置（简化为一行）
-        system_prompt_layout = QHBoxLayout()
-        system_prompt_layout.addWidget(QLabel("系统提示:"))
-        self.ai_system_prompt_edit = QLineEdit()
-        self.ai_system_prompt_edit.setPlaceholderText("输入系统提示词（可选）...")
-        system_prompt_layout.addWidget(self.ai_system_prompt_edit)
-        chat_layout.addLayout(system_prompt_layout)
-
-        # 用户输入区域
-        input_layout = QHBoxLayout()
-        
-        # 用户输入框
-        self.chat_input = QLineEdit()
-        self.chat_input.setPlaceholderText("输入消息...")
-        self.chat_input.setMinimumHeight(35)
-        self.chat_input.returnPressed.connect(self.send_chat_message)
-        input_layout.addWidget(self.chat_input)
-        
-        # 发送按钮
-        self.send_button = QPushButton("发送")
-        self.send_button.setMinimumHeight(35)
-        self.send_button.setMinimumWidth(60)
-        self.send_button.clicked.connect(self.send_chat_message)
-        self.send_button.setStyleSheet("""
-            QPushButton {
-                background-color: #007AFF;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #0056CC;
-            }
-            QPushButton:pressed {
-                background-color: #004499;
-            }
-        """)
-        input_layout.addWidget(self.send_button)
-        
-        chat_layout.addLayout(input_layout)
-        
-        # 聊天控制按钮
-        chat_control_layout = QHBoxLayout()
-        
-        self.clear_chat_btn = QPushButton("🗑️ 清空对话")
-        self.clear_chat_btn.clicked.connect(self.clear_chat_history)
-        chat_control_layout.addWidget(self.clear_chat_btn)
-        
-        chat_control_layout.addStretch()
-        
-        self.api_test_btn = QPushButton("🧪 测试连接")
-        self.api_test_btn.setToolTip("测试API连接是否正常")
-        self.api_test_btn.clicked.connect(self.test_ai_connection)
-        chat_control_layout.addWidget(self.api_test_btn)
-        
-        chat_layout.addLayout(chat_control_layout)
-
-        ai_layout.addWidget(chat_group)
-
-        # ==================== 技术调试信息 (默认折叠) ====================
-        debug_group = CollapsibleGroupBox("🔍 技术调试信息")
-        debug_group.setChecked(False)  # 默认折叠
-        debug_layout = QVBoxLayout()
-
-        # 请求头显示
-        self.request_headers_debug = CollapsibleGroupBox("📋 请求头信息")
-        self.request_headers_debug.setChecked(False)
-        self.request_headers_text = QTextEdit()
-        self.request_headers_text.setMaximumHeight(120)
-        self.request_headers_text.setPlaceholderText("这里将显示发送的HTTP请求头...")
-        self.request_headers_debug.add_widget(self.request_headers_text)
-        debug_layout.addWidget(self.request_headers_debug)
-
-        # 接收消息显示
-        self.received_messages_debug = CollapsibleGroupBox("📨 接收消息")
-        self.received_messages_debug.setChecked(False)
-        self.received_messages_text = QTextEdit()
-        self.received_messages_text.setMaximumHeight(120)
-        self.received_messages_text.setPlaceholderText("这里将显示接收到的原始响应数据...")
-        self.received_messages_debug.add_widget(self.received_messages_text)
-        debug_layout.addWidget(self.received_messages_debug)
-
-        # JSON数据结构显示
-        self.json_structure_debug = CollapsibleGroupBox("📊 JSON数据结构")
-        self.json_structure_debug.setChecked(False)
-        self.json_structure_text = QTextEdit()
-        self.json_structure_text.setMaximumHeight(120)
-        self.json_structure_text.setPlaceholderText("这里将显示格式化的请求/响应JSON结构...")
-        self.json_structure_debug.add_widget(self.json_structure_text)
-        debug_layout.addWidget(self.json_structure_debug)
-
-        debug_group.add_layout(debug_layout)
-        ai_layout.addWidget(debug_group)
-
-        # ==================== 状态显示 ====================
-        status_group = QGroupBox("📊 状态信息")
-        status_layout = QVBoxLayout(status_group)
-
-        self.ai_status_label = QLabel("就绪")
-        self.ai_status_label.setStyleSheet("color: #27ae60; font-weight: bold;")
-        status_layout.addWidget(self.ai_status_label)
-
-        self.ai_last_test_label = QLabel("最后测试: 从未测试")
-        self.ai_last_test_label.setStyleSheet("color: #7f8c8d; font-size: 12px;")
-        status_layout.addWidget(self.ai_last_test_label)
-
-        ai_layout.addWidget(status_group)
-
-        # ==================== 初始化聊天相关变量 ====================
-        self.chat_history = []  # 存储聊天历史
-        self.current_typing_indicator = None  # 当前的输入指示器
-
-        # ==================== 实时更新信号绑定 ====================
-        # 创建防抖定时器（用于调试预览，不影响聊天）
-        self.debug_update_timer = QTimer()
-        self.debug_update_timer.setSingleShot(True)
-        self.debug_update_timer.timeout.connect(self.update_debug_preview)
-
-        # 防抖更新函数
-        def schedule_debug_update():
-            self.debug_update_timer.stop()
-            self.debug_update_timer.start(300)  # 300ms防抖延迟
-
-        # 基础配置控件信号绑定
-        self.ai_url_edit.textChanged.connect(schedule_debug_update)
-        self.ai_key_edit.textChanged.connect(schedule_debug_update)
-        self.ai_system_prompt_edit.textChanged.connect(schedule_debug_update)
-
-        # 为所有参数控件绑定信号
-        for param_name, param_control in self.ai_parameters.items():
-            param_control.enable_checkbox.toggled.connect(schedule_debug_update)
-            value_widget = param_control.value_widget
-            if hasattr(value_widget, 'textChanged'):
-                value_widget.textChanged.connect(schedule_debug_update)
-            elif hasattr(value_widget, 'valueChanged'):
-                value_widget.valueChanged.connect(schedule_debug_update)
-            elif hasattr(value_widget, 'toggled'):
-                value_widget.toggled.connect(schedule_debug_update)
-            elif hasattr(value_widget, 'currentTextChanged'):
-                value_widget.currentTextChanged.connect(schedule_debug_update)
-
-        # 初始化调试预览
-        self.update_debug_preview()
-
-        return ai_widget
-
-    # ==================== 聊天功能方法 ====================
-    
-    def send_chat_message(self):
-        """发送聊天消息"""
-        message_text = self.chat_input.text().strip()
-        if not message_text:
-            return
-            
-        # 检查基础配置
-        api_url = self.ai_url_edit.text().strip()
-        api_key = self.ai_key_edit.text().strip()
-        
-        if not api_url:
-            QMessageBox.warning(self, "警告", "请先配置API地址！")
-            return
-            
-        if not api_key:
-            QMessageBox.warning(self, "警告", "请先配置API密钥！")
-            return
-        
-        # 清空输入框
-        self.chat_input.clear()
-        
-        # 添加用户消息气泡
-        user_bubble = UserMessageBubble(message_text)
-        self.chat_scroll_area.add_message(user_bubble)
-        
-        # 添加到聊天历史
-        self.chat_history.append({"role": "user", "content": message_text})
-        
-        # 显示AI正在输入的指示器
-        self.current_typing_indicator = TypingIndicator()
-        self.chat_scroll_area.add_message(self.current_typing_indicator)
-        self.current_typing_indicator.start_typing()
-        
-        # 禁用发送按钮，防止重复发送
-        self.send_button.setEnabled(False)
-        self.send_button.setText("发送中...")
-        
-        # 在子线程中发送API请求
-        def send_request():
-            try:
-                # 获取系统提示
-                system_prompt = self.ai_system_prompt_edit.text().strip()
-                
-                # 构建消息历史
-                messages = []
-                if system_prompt:
-                    messages.append({"role": "system", "content": system_prompt})
-                
-                # 添加聊天历史（最近10条）
-                recent_history = self.chat_history[-10:]  # 只保留最近10条对话
-                messages.extend(recent_history)
-                
-                # 获取启用的参数
-                enabled_params = self.get_enabled_parameters()
-                use_streaming = enabled_params.get('stream', False)
-                
-                # 构建请求
-                payload = {"messages": messages}
-                payload.update(enabled_params)
-                
-                headers = {
-                    'Content-Type': 'application/json',
-                    'Authorization': f'Bearer {api_key}',
-                    'User-Agent': 'AI-Report-Tool/1.0'
-                }
-                
-                # 发送请求（10秒超时）
-                response = requests.post(
-                    api_url,
-                    headers=headers,
-                    json=payload,
-                    timeout=10,
-                    stream=use_streaming
-                )
-                
-                # 处理响应
-                if use_streaming:
-                    self.handle_streaming_response(response)
-                else:
-                    self.handle_normal_response(response)
-                    
-            except requests.exceptions.Timeout:
-                self.handle_chat_error("请求超时，请检查网络连接")
-            except requests.exceptions.ConnectionError:
-                self.handle_chat_error("连接失败，请检查网络或API地址")
-            except Exception as e:
-                self.handle_chat_error(f"发送失败：{str(e)}")
-        
-        # 启动请求线程
-        chat_thread = threading.Thread(target=send_request, daemon=True)
-        chat_thread.start()
-    
-    def handle_normal_response(self, response):
-        """处理非流式响应"""
-        def update_ui():
-            try:
-                # 移除输入指示器
-                if self.current_typing_indicator:
-                    self.current_typing_indicator.stop_typing()
-                    self.current_typing_indicator.setParent(None)
-                    self.current_typing_indicator = None
-                
-                if response.status_code == 200:
-                    response_data = response.json()
-                    
-                    # 提取AI回复
-                    ai_response = ""
-                    if 'choices' in response_data and len(response_data['choices']) > 0:
-                        choice = response_data['choices'][0]
-                        if 'message' in choice and 'content' in choice['message']:
-                            ai_response = choice['message']['content']
-                    
-                    if ai_response:
-                        # 添加AI回复气泡
-                        ai_bubble = AssistantMessageBubble(ai_response)
-                        self.chat_scroll_area.add_message(ai_bubble)
-                        
-                        # 添加到聊天历史
-                        self.chat_history.append({"role": "assistant", "content": ai_response})
-                        
-                        # 更新调试信息（不清空，追加）
-                        self.append_debug_info("聊天请求", response_data)
-                    else:
-                        self.handle_chat_error("AI回复为空")
-                else:
-                    self.handle_chat_error(f"API错误：{response.status_code} - {response.text}")
-                    
-            except Exception as e:
-                self.handle_chat_error(f"处理响应失败：{str(e)}")
-            finally:
-                # 恢复发送按钮
-                self.send_button.setEnabled(True)
-                self.send_button.setText("发送")
-        
-        # 在主线程更新UI
-        QTimer.singleShot(0, update_ui)
-    
-    def handle_streaming_response(self, response):
-        """处理流式响应"""
-        def update_ui():
-            try:
-                # 移除输入指示器
-                if self.current_typing_indicator:
-                    self.current_typing_indicator.stop_typing()
-                    self.current_typing_indicator.setParent(None)
-                    self.current_typing_indicator = None
-                
-                if response.status_code == 200:
-                    # 创建AI回复气泡
-                    ai_bubble = AssistantMessageBubble("")
-                    ai_bubble.start_streaming()
-                    self.chat_scroll_area.add_message(ai_bubble)
-                    
-                    accumulated_content = ""
-                    
-                    # 处理流式数据
-                    for line in response.iter_lines(decode_unicode=True):
-                        if line and line.strip():
-                            if line.startswith('data: '):
-                                data_content = line[6:]
-                                
-                                if data_content == '[DONE]':
-                                    break
-                                
-                                try:
-                                    chunk_data = json.loads(data_content)
-                                    
-                                    if 'choices' in chunk_data and len(chunk_data['choices']) > 0:
-                                        choice = chunk_data['choices'][0]
-                                        if 'delta' in choice and 'content' in choice['delta']:
-                                            content = choice['delta']['content']
-                                            accumulated_content += content
-                                            
-                                            # 实时更新气泡内容
-                                            ai_bubble.update_streaming_text(accumulated_content)
-                                            
-                                except json.JSONDecodeError:
-                                    continue
-                    
-                    # 完成流式输出
-                    ai_bubble.finish_streaming()
-                    
-                    if accumulated_content:
-                        # 添加到聊天历史
-                        self.chat_history.append({"role": "assistant", "content": accumulated_content})
-                    else:
-                        self.handle_chat_error("流式响应为空")
-                        
-                else:
-                    self.handle_chat_error(f"流式API错误：{response.status_code}")
-                    
-            except Exception as e:
-                self.handle_chat_error(f"处理流式响应失败：{str(e)}")
-            finally:
-                # 恢复发送按钮
-                self.send_button.setEnabled(True)
-                self.send_button.setText("发送")
-        
-        # 在主线程更新UI
-        QTimer.singleShot(0, update_ui)
-    
-    def handle_chat_error(self, error_message):
-        """处理聊天错误"""
-        def update_ui():
-            # 移除输入指示器
-            if self.current_typing_indicator:
-                self.current_typing_indicator.stop_typing()
-                self.current_typing_indicator.setParent(None)
-                self.current_typing_indicator = None
-            
-            # 添加错误消息气泡
-            error_bubble = AssistantMessageBubble(f"❌ {error_message}")
-            error_bubble.setStyleSheet("""
-                AssistantMessageBubble {
-                    background-color: #FFE6E6;
-                    border: 1px solid #FF9999;
-                    border-radius: 12px;
-                    margin-left: 10px;
-                    margin-right: 50px;
-                }
-            """)
-            self.chat_scroll_area.add_message(error_bubble)
-            
-            # 恢复发送按钮
-            self.send_button.setEnabled(True)
-            self.send_button.setText("发送")
-        
-        # 在主线程更新UI
-        QTimer.singleShot(0, update_ui)
-    
-    def clear_chat_history(self):
-        """清空聊天历史"""
-        reply = QMessageBox.question(self, "确认", "确定要清空所有对话记录吗？")
-        if reply == QMessageBox.Yes:
-            self.chat_scroll_area.clear_chat()
-            self.chat_history.clear()
-    
-    def append_debug_info(self, request_type, data):
-        """追加调试信息（不清空现有内容）"""
-        try:
-            import json
-            from datetime import datetime
-            
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            
-            # 格式化JSON数据
-            json_text = json.dumps(data, indent=2, ensure_ascii=False)
-            
-            # 追加到JSON结构显示
-            current_text = self.json_structure_text.toPlainText()
-            new_text = f"{current_text}\n\n[{timestamp}] {request_type}:\n{json_text}"
-            self.json_structure_text.setText(new_text)
-            
-            # 滚动到底部
-            cursor = self.json_structure_text.textCursor()
-            cursor.movePosition(cursor.End)
-            self.json_structure_text.setTextCursor(cursor)
-            
-        except Exception as e:
-            print(f"Debug info append error: {e}")
-
-    def test_ai_connection(self):
-        """测试API连接（独立测试，不影响聊天和调试区域）"""
-        try:
-            api_url = self.ai_url_edit.text().strip()
-            api_key = self.ai_key_edit.text().strip()
-
-            if not api_url:
-                QMessageBox.warning(self, "警告", "请输入API地址！")
-                return
-
-            if not api_key:
-                QMessageBox.warning(self, "警告", "请输入API密钥！")
-                return
-
-            # 更新按钮状态
-            original_text = self.api_test_btn.text()
-            self.api_test_btn.setText("测试中...")
-            self.api_test_btn.setEnabled(False)
-            
-            # 更新状态标签
-            self.ai_status_label.setText("正在测试连接...")
-            self.ai_status_label.setStyleSheet("color: #f39c12; font-weight: bold;")
-
-            # 在子线程中进行连接测试（避免阻塞UI）
-            def run_connection_test():
-                try:
-                    import requests
-                    from urllib.parse import urlparse
-                    
-                    # 构建简单的测试请求
-                    test_payload = {
-                        "messages": [{"role": "user", "content": "Hello"}],
-                        "model": self.ai_parameters.get('model', {}).get_value() if 'model' in self.ai_parameters else "gemini-2.5-pro",
-                        "max_tokens": 10
-                    }
-                    
-                    headers = {
-                        'Content-Type': 'application/json',
-                        'Authorization': f'Bearer {api_key}',
-                        'User-Agent': 'AI-Report-Tool/1.0'
-                    }
-                    
-                    # 发送测试请求（10秒超时）
-                    response = requests.post(
-                        api_url, 
-                        headers=headers, 
-                        json=test_payload,
-                        timeout=10
-                    )
-                    
-                    # 在主线程中更新UI
-                    def update_ui():
-                        try:
-                            if response.status_code == 200:
-                                response_data = response.json()
-                                
-                                self.ai_status_label.setText("连接正常")
-                                self.ai_status_label.setStyleSheet("color: #27ae60; font-weight: bold;")
-                                
-                                # 提取测试响应
-                                test_response = "无响应内容"
-                                if 'choices' in response_data and len(response_data['choices']) > 0:
-                                    choice = response_data['choices'][0]
-                                    if 'message' in choice and 'content' in choice['message']:
-                                        test_response = choice['message']['content']
-                                
-                                status_info = f"✅ API连接测试成功！\n\n"
-                                status_info += f"🌐 API地址: {api_url}\n"
-                                status_info += f"📡 响应状态: {response.status_code}\n"
-                                status_info += f"🤖 测试响应: {test_response}\n\n"
-                                
-                                # 显示使用统计（如果有）
-                                usage = response_data.get('usage', {})
-                                if usage:
-                                    status_info += f"🔢 令牌使用: {usage.get('total_tokens', 'N/A')}\n"
-                                
-                                # 追加到调试信息（不清空现有内容）
-                                self.append_debug_info("API连接测试", response_data)
-                                
-                                QMessageBox.information(self, "连接测试成功", status_info)
-                                
-                            elif response.status_code == 401:
-                                self.ai_status_label.setText("认证失败")
-                                self.ai_status_label.setStyleSheet("color: #e74c3c; font-weight: bold;")
-                                QMessageBox.critical(self, "认证失败", "API密钥无效，请检查配置")
-                                
-                            elif response.status_code == 403:
-                                self.ai_status_label.setText("访问被拒绝")
-                                self.ai_status_label.setStyleSheet("color: #e74c3c; font-weight: bold;")
-                                QMessageBox.critical(self, "访问被拒绝", "API访问被拒绝，请检查权限")
-                                
-                            else:
-                                self.ai_status_label.setText("连接异常")
-                                self.ai_status_label.setStyleSheet("color: #e74c3c; font-weight: bold;")
-                                QMessageBox.warning(self, "连接测试", f"服务器响应异常\n状态码: {response.status_code}\n响应: {response.text[:200]}")
-                            
-                            # 更新最后测试时间
-                            from datetime import datetime
-                            self.ai_last_test_label.setText(f"最后测试: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                            
-                        except Exception as e:
-                            self.ai_status_label.setText("处理错误")
-                            self.ai_status_label.setStyleSheet("color: #e74c3c; font-weight: bold;")
-                            QMessageBox.critical(self, "处理错误", f"处理响应时发生错误:\n{str(e)}")
-                        finally:
-                            # 恢复按钮状态
-                            self.api_test_btn.setText(original_text)
-                            self.api_test_btn.setEnabled(True)
-
-                    # 使用QTimer.singleShot确保在主线程执行
-                    from PySide6.QtCore import QTimer
-                    QTimer.singleShot(0, update_ui)
-
-                except requests.exceptions.Timeout:
-                    def show_timeout():
-                        self.ai_status_label.setText("连接超时")
-                        self.ai_status_label.setStyleSheet("color: #e74c3c; font-weight: bold;")
-                        QMessageBox.critical(self, "连接超时", "连接测试超时（10秒），请检查网络连接或API地址")
-                        self.api_test_btn.setText(original_text)
-                        self.api_test_btn.setEnabled(True)
-                    QTimer.singleShot(0, show_timeout)
-
-                except requests.exceptions.ConnectionError:
-                    def show_connection_error():
-                        self.ai_status_label.setText("连接失败")
-                        self.ai_status_label.setStyleSheet("color: #e74c3c; font-weight: bold;")
-                        QMessageBox.critical(self, "连接失败", "无法连接到服务器，请检查网络连接或API地址")
-                        self.api_test_btn.setText(original_text)
-                        self.api_test_btn.setEnabled(True)
-                    QTimer.singleShot(0, show_connection_error)
-
-                except Exception as e:
-                    def show_error():
-                        self.ai_status_label.setText("测试异常")
-                        self.ai_status_label.setStyleSheet("color: #e74c3c; font-weight: bold;")
-                        QMessageBox.critical(self, "测试异常", f"连接测试过程中发生异常:\n{str(e)}")
-                        self.api_test_btn.setText(original_text)
-                        self.api_test_btn.setEnabled(True)
-                    QTimer.singleShot(0, show_error)
-
-            # 启动连接测试线程
-            connection_thread = threading.Thread(target=run_connection_test, daemon=True)
-            connection_thread.start()
-
-        except Exception as e:
-            self.ai_status_label.setText("测试错误")
-            self.ai_status_label.setStyleSheet("color: #e74c3c; font-weight: bold;")
-            self.api_test_btn.setText(original_text)
-            self.api_test_btn.setEnabled(True)
-            QMessageBox.critical(self, "测试错误", f"无法启动连接测试:\n{str(e)}")
-
-    def save_ai_config(self):
-        """保存AI配置"""
-        config = self.get_ai_config()
-        try:
-            import json
-            config_file = "ai_config.json"
-            with open(config_file, 'w', encoding='utf-8') as f:
-                json.dump(config, f, indent=2, ensure_ascii=False)
-            QMessageBox.information(self, "成功", f"AI配置已保存到 {config_file}")
-        except Exception as e:
-            QMessageBox.critical(self, "错误", f"保存AI配置失败:\n{str(e)}")
-
-    def load_ai_config(self):
-        """加载AI配置"""
-        try:
-            import json
-            config_file = "ai_config.json"
-            with open(config_file, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-            self.set_ai_config(config)
-            QMessageBox.information(self, "成功", "AI配置已加载")
-        except FileNotFoundError:
-            QMessageBox.warning(self, "警告", "配置文件不存在")
-        except Exception as e:
-            QMessageBox.critical(self, "错误", f"加载AI配置失败:\n{str(e)}")
-
-    def reset_ai_config(self):
-        """重置AI配置"""
-        reply = QMessageBox.question(self, "确认", "确定要重置AI配置为默认值吗？")
-        if reply == QMessageBox.Yes:
-            # 重置基础配置
-            self.ai_url_edit.setText("https://api.kkyyxx.xyz/v1/chat/completions")
-            self.ai_key_edit.setText("UFXLzCFM2BtvfvAc1ZC5zRkJLPJKvFlKeBKYfI5evJNqMO7t")
-            self.ai_system_prompt_edit.setText("")
-            self.ai_user_message_edit.setText("")
-            
-            # 重置所有参数到默认值
-            for param_name, param_control in self.ai_parameters.items():
-                param_control.set_enabled(param_name == "model")  # 只有model默认启用
-                param_control.set_value(param_control.default_value)
-            
-            # 更新状态显示
-            self.ai_status_label.setText("未配置")
-            self.ai_status_label.setStyleSheet("color: #e74c3c; font-weight: bold;")
-            self.ai_last_test_label.setText("最后测试: 从未测试")
-            
-            QMessageBox.information(self, "成功", "AI配置已重置为默认值")
-
-    def export_ai_config(self):
-        """导出AI配置"""
-        from PySide6.QtWidgets import QFileDialog
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "导出AI配置", "ai_config.json", "JSON文件 (*.json)"
-        )
-        if file_path:
-            config = self.get_ai_config()
-            try:
-                import json
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    json.dump(config, f, indent=2, ensure_ascii=False)
-                QMessageBox.information(self, "成功", f"AI配置已导出到 {file_path}")
-            except Exception as e:
-                QMessageBox.critical(self, "错误", f"导出AI配置失败:\n{str(e)}")
-
-    def import_ai_config(self):
-        """导入AI配置"""
-        from PySide6.QtWidgets import QFileDialog
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "导入AI配置", "", "JSON文件 (*.json)"
-        )
-        if file_path:
-            try:
-                import json
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-                self.set_ai_config(config)
-                QMessageBox.information(self, "成功", "AI配置已导入")
-            except Exception as e:
-                QMessageBox.critical(self, "错误", f"导入AI配置失败:\n{str(e)}")
-
-    def get_ai_config(self):
-        """获取当前AI配置"""
-        config = {
-            "api_url": self.ai_url_edit.text(),
-            "api_key": self.ai_key_edit.text(),
-            "system_prompt": self.ai_system_prompt_edit.toPlainText(),
-            "user_message": self.ai_user_message_edit.toPlainText(),
-            "parameters": {}
-        }
-        
-        # 获取所有启用的参数
-        for param_name, param_control in self.ai_parameters.items():
-            config["parameters"][param_name] = {
-                "enabled": param_control.is_enabled(),
-                "value": param_control.get_value()
-            }
-            
-        return config
-
-    def set_ai_config(self, config):
-        """设置AI配置"""
-        # 设置基础配置
-        self.ai_url_edit.setText(config.get("api_url", "https://api.kkyyxx.xyz/v1/chat/completions"))
-        self.ai_key_edit.setText(config.get("api_key", ""))
-        self.ai_system_prompt_edit.setText(config.get("system_prompt", ""))
-        self.ai_user_message_edit.setText(config.get("user_message", ""))
-        
-        # 设置参数配置
-        parameters = config.get("parameters", {})
-        for param_name, param_control in self.ai_parameters.items():
-            if param_name in parameters:
-                param_config = parameters[param_name]
-                param_control.set_enabled(param_config.get("enabled", False))
-                param_control.set_value(param_config.get("value", param_control.default_value))
-            else:
-                # 如果配置中没有该参数，使用默认值
-                param_control.set_enabled(param_name == "model")  # 只有model默认启用
-                param_control.set_value(param_control.default_value)
-
-    def get_enabled_parameters(self) -> Dict:
-        """获取所有启用的AI参数"""
-        enabled_params = {}
-
-        # 遍历所有参数控件
-        for param_name, param_control in self.ai_parameters.items():
-            if param_control.is_enabled() and param_control.validate_value():
-                param_value = param_control.get_value()
-                # 跳过空值和无效值
-                if param_value is not None and param_value != "":
-                    enabled_params[param_name] = param_value
-
-        return enabled_params
-
-    def create_debug_callbacks(self) -> Dict:
-        """创建调试回调函数 - 使用信号槽方式确保线程安全"""
-        from PySide6.QtCore import QTimer
-        
-        def safe_set_text(widget, text):
-            # 使用QTimer.singleShot确保在主线程中执行
-            def update_text():
-                try:
-                    widget.setText(str(text))
-                except Exception as e:
-                    print(f"Debug callback error: {e}")
-            
-            QTimer.singleShot(0, update_text)
-        
-        return {
-            'on_request_headers': lambda text: safe_set_text(self.request_headers_text, text),
-            'on_received_data': lambda text: safe_set_text(self.received_messages_text, text),
-            'on_json_structure': lambda text: safe_set_text(self.json_structure_text, text),
-            'on_ai_response': lambda text: safe_set_text(self.ai_response_text, text)
-        }
-
-    def update_debug_preview(self):
-        """实时更新调试预览信息"""
-        try:
-            import json
-
-            # 获取基础配置
-            api_url = self.ai_url_edit.text().strip()
-            api_key = self.ai_key_edit.text().strip()
-            system_prompt = self.ai_system_prompt_edit.text().strip()
-            user_message = self.chat_input.text().strip()
-
-            # 构建HTTP请求头
-            headers = {
-                'Content-Type': 'application/json',
-                'Authorization': f'Bearer {api_key}' if api_key else 'Bearer [API_KEY]',
-                'User-Agent': 'AI-Report-Tool/1.0',
-                'Accept': 'application/json',
-                'Connection': 'keep-alive'
-            }
-
-            # 格式化请求头显示
-            headers_text = f"POST {api_url or '[API_URL]'} HTTP/1.1\n"
-            for key, value in headers.items():
-                headers_text += f"{key}: {value}\n"
-
-            # 更新请求头显示
-            self.request_headers_text.setText(headers_text)
-
-            # 获取启用的参数
-            enabled_params = self.get_enabled_parameters()
-
-            # 构建消息结构
-            messages = []
-            if system_prompt:
-                messages.append({
-                    "role": "system",
-                    "content": system_prompt
-                })
-
-            user_content = user_message if user_message else "请说一句话来测试API连接。"
-            messages.append({
-                "role": "user",
-                "content": user_content
-            })
-
-            # 构建完整的JSON payload
-            payload = {
-                "messages": messages
-            }
-
-            # 添加启用的参数
-            for param_name, param_value in enabled_params.items():
-                payload[param_name] = param_value
-
-            # 格式化JSON结构显示
-            json_text = json.dumps(payload, indent=2, ensure_ascii=False)
-            self.json_structure_text.setText(json_text)
-
-            # 构建接收消息预览
-            received_messages = []
-            for i, msg in enumerate(messages, 1):
-                received_messages.append(f"消息 {i}: {msg['role']} - {msg['content'][:50]}{'...' if len(msg['content']) > 50 else ''}")
-
-            self.received_messages_text.setText("\n".join(received_messages))
-
-            # 更新AI响应显示（显示预期格式）- 现在使用received_messages_text显示
-            response_preview = "等待API响应...\n\n预期响应格式:\n{\n  \"choices\": [\n    {\n      \"message\": {\n        \"role\": \"assistant\",\n        \"content\": \"AI的回复内容\"\n      }\n    }\n  ]\n}"
-            # 将响应预览显示在received_messages_text中
-            if hasattr(self, 'received_messages_text'):
-                self.received_messages_text.append("\n--- 响应预览 ---\n" + response_preview)
-
-        except Exception as e:
-            # 错误情况下显示错误信息
-            error_text = f"预览生成错误: {str(e)}"
-            self.request_headers_text.setText(error_text)
-            self.json_structure_text.setText(error_text)
-            self.received_messages_text.setText(error_text)
-            print(f"Error display failed: {e}")
 
     def create_output_panel(self, parent_layout):
         """创建底部输出面板"""
         # 创建日志区域容器
-        log_container = QWidget()
-        log_container.setMaximumHeight(180)  # 限制整个日志区域高度
-        log_layout = QVBoxLayout(log_container)
+        self.log_container = QWidget()  # 保存引用用于全屏切换
+        self.log_container.setMaximumHeight(180)  # 限制整个日志区域高度
+        log_layout = QVBoxLayout(self.log_container)
         log_layout.setContentsMargins(5, 5, 5, 5)
         log_layout.setSpacing(2)
 
         # 日志标题 - 设置小字体和固定高度
         log_label = QLabel("📋 系统日志")
-        log_label.setStyleSheet("""
+        log_label.setStyleSheet(
+            """
             QLabel {
                 font-size: 12px;
                 font-weight: bold;
@@ -2531,7 +3010,8 @@ class MainWindow(QMainWindow):
                 border: 1px solid #ddd;
                 border-radius: 3px;
             }
-        """)
+        """
+        )
         log_label.setFixedHeight(25)  # 固定标题高度
         log_layout.addWidget(log_label)
 
@@ -2539,7 +3019,8 @@ class MainWindow(QMainWindow):
         self.output_text = QPlainTextEdit()
         self.output_text.setMaximumHeight(145)  # 文本框高度
         self.output_text.setReadOnly(True)
-        self.output_text.setStyleSheet("""
+        self.output_text.setStyleSheet(
+            """
             QPlainTextEdit {
                 font-family: 'Consolas', 'Monaco', monospace;
                 font-size: 11px;
@@ -2547,30 +3028,15 @@ class MainWindow(QMainWindow):
                 border-radius: 3px;
                 padding: 5px;
             }
-        """)
+        """
+        )
         log_layout.addWidget(self.output_text)
 
         # 创建日志管理器
         self.log_manager = LogManager(self.output_text)
 
         # 添加到主布局
-        parent_layout.addWidget(log_container)
-
-    def create_simple_menus(self):
-        """创建简化菜单栏（只保留系统功能，移除重复的业务功能）"""
-        menubar = self.menuBar()
-
-        # 文件菜单 - 只保留系统级功能
-        file_menu = menubar.addMenu("文件")
-        file_menu.addAction("退出", self.close)
-
-        # 视图菜单
-        view_menu = menubar.addMenu("视图")
-        view_menu.addAction("重置布局", self.reset_layout)
-
-        # 帮助菜单
-        help_menu = menubar.addMenu("帮助")
-        help_menu.addAction("关于", self.show_about)
+        parent_layout.addWidget(self.log_container)
 
     def create_menus(self):
         """旧的菜单创建方法 - 已弃用"""
@@ -2583,72 +3049,482 @@ class MainWindow(QMainWindow):
     def setup_models(self):
         """设置数据模型"""
         self.target_model = TargetItemModel()
+        # 设置日志管理器引用
+        self.target_model.log_manager = self.log_manager
         self.source_model = SourceItemModel()
-        self.sheet_explorer_model = SheetExplorerModel()
+
+        # 监听公式更新事件
+        self.target_model.formulaEdited.connect(self.handle_formula_updates)
+        self.target_model.layoutChanged.connect(
+            lambda: self._apply_main_header_layout()
+        )
 
         # 设置主数据网格
         self.main_data_grid.setModel(self.target_model)
+        self._apply_main_header_layout()
+        ensure_word_wrap(self.main_data_grid)
 
         # 设置公式编辑器委托
         self.formula_delegate = FormulaEditorDelegate(self.workbook_manager)
-        self.main_data_grid.setItemDelegateForColumn(3, self.formula_delegate)  # 映射公式列现在是第3列
+        self.main_data_grid.setItemDelegateForColumn(
+            3, self.formula_delegate
+        )  # 映射公式列现在是第3列
 
         # 设置来源项树 - 现在使用增强的显示方法
         # self.source_tree.setModel(self.source_model)  # 保留旧方法作为备用
 
-        # 设置工作表浏览器
-        self.sheet_explorer.setModel(self.sheet_explorer_model)
-        self.sheet_explorer.setHeaderHidden(False)
-        self.sheet_explorer.expandAll()  # 默认展开所有节点
-
         # 配置列宽
         header = self.main_data_grid.header()
+        ensure_interactive_header(header, stretch_last=False)
         header.setStretchLastSection(False)
-        header.setSectionResizeMode(0, QHeaderView.Fixed)   # 状态列
-        header.setSectionResizeMode(1, QHeaderView.Fixed)   # 级别列
-        header.setSectionResizeMode(2, QHeaderView.Stretch) # 项目名称列
-        header.setSectionResizeMode(3, QHeaderView.Stretch) # 公式列
-        header.setSectionResizeMode(4, QHeaderView.Fixed)   # 预览值列
+        self._user_column_widths.clear()
+        self._main_auto_resizing = False
 
-        # 设置固定列宽
-        self.main_data_grid.setColumnWidth(0, 60)   # 状态列
-        self.main_data_grid.setColumnWidth(1, 60)   # 级别列
-        self.main_data_grid.setColumnWidth(4, 120)  # 预览值列
+        # 设置默认resize模式（具体列宽会在adjust_main_table_columns中动态配置）
+        # 初始状态下所有列都使用Interactive模式，允许用户调整
+        # 后续adjust_main_table_columns()会根据列名动态设置每列的具体策略
+
+        header.sectionResized.connect(self._on_main_header_section_resized)
+        header.sectionPressed.connect(self._on_main_header_section_pressed)
+
+        # 触发列宽自动调整（会调用adjust_main_table_columns）
+        self.schedule_main_table_resize()
 
     def setup_connections(self):
         """设置信号连接"""
         # 工具栏按钮
         self.load_files_btn.clicked.connect(self.load_files)
-        self.extract_data_btn.clicked.connect(self.extract_data)
         self.ai_analyze_btn.clicked.connect(self.ai_analyze)
+        self.ai_assistant_btn.clicked.connect(self.show_ai_assistant)  # 新增 AI 助手连接
         self.calculate_btn.clicked.connect(self.calculate_preview)
         self.export_btn.clicked.connect(self.export_excel)
+        self.help_btn.clicked.connect(self.show_about)
+        self.clear_sheet_formulas_btn.clicked.connect(self.clear_current_sheet_formulas)
+        self.clear_all_formulas_btn.clicked.connect(self.clear_all_formulas)
 
-        # 初始状态：只有加载按钮可用
-        self.extract_data_btn.setEnabled(False)
+        # 初始状态：只有加载按钮和 AI 助手可用
         self.ai_analyze_btn.setEnabled(False)
+        self.ai_assistant_btn.setEnabled(True)  # AI 助手始终可用
         self.calculate_btn.setEnabled(False)
         self.export_btn.setEnabled(False)
+        self.help_btn.setEnabled(True)
+        self.clear_sheet_formulas_btn.setEnabled(False)
+        self.clear_all_formulas_btn.setEnabled(False)
 
         # 主数据网格选择变化
-        self.main_data_grid.selectionModel().currentChanged.connect(self.on_target_selection_changed)
+        self.main_data_grid.selectionModel().currentChanged.connect(
+            self.on_target_selection_changed
+        )
         self.main_data_grid.doubleClicked.connect(self.on_main_grid_double_clicked)
 
         # 拖放信号
         self.source_tree.dragStarted.connect(self.on_drag_started)
         self.main_data_grid.itemDropped.connect(self.on_item_dropped)
 
+        # 连接来源项工作表切换信号，确保切换时主表格列宽自动调整
+        self.source_tree.sheetChanged.connect(
+            lambda _: self.schedule_main_table_resize(0)
+        )
+
         # 公式编辑器信号
         self.formula_editor.formulaChanged.connect(self.on_formula_changed)
 
         # 注意：搜索功能现在由SearchableSourceTree内部处理
 
-        # 工作表浏览器信号
-        self.sheet_explorer_model.sheetSelected.connect(self.on_sheet_selected)
-        self.sheet_explorer_model.flashReportActivated.connect(self.on_flash_report_activated)
-        self.sheet_explorer.clicked.connect(self.sheet_explorer_model.handle_item_clicked)
+    def _apply_main_header_layout(self):
+        if not hasattr(self, "main_data_grid") or not hasattr(self, "target_model"):
+            return
 
-    def show_sheet_classification_dialog(self, sheet_name: str, auto_classification: str) -> str:
+        if not self.target_model:
+            apply_multirow_header(self.main_data_grid, {}, 1, stretch_last=False)
+            return
+
+        layout_provider = getattr(self.target_model, "get_header_layout", None)
+        if not callable(layout_provider):
+            apply_multirow_header(self.main_data_grid, {}, 1, stretch_last=False)
+            return
+
+        layout_map, row_count = self.target_model.get_header_layout()
+        apply_multirow_header(
+            self.main_data_grid, layout_map, row_count, stretch_last=False
+        )
+
+    def schedule_main_table_resize(self, delay_ms: int = 0):
+        """延迟调整主数据网格列宽"""
+        try:
+            if not hasattr(self, "_main_resize_timer"):
+                self._main_resize_timer = QTimer(self)
+                self._main_resize_timer.setSingleShot(True)
+                self._main_resize_timer.timeout.connect(self.adjust_main_table_columns)
+
+            # 关键修复1：先停止旧的定时器，避免多个调用排队
+            if self._main_resize_timer.isActive():
+                self._main_resize_timer.stop()
+                self.log_manager.info("停止之前的列宽调整定时器")
+
+            # 关键修复2：增加最小延迟，确保view有足够时间更新
+            actual_delay = max(200, delay_ms)  # 最小200ms延迟
+            self._main_resize_timer.start(actual_delay)
+            self.log_manager.info(f"列宽调整将在 {actual_delay}ms 后执行")
+
+            # 同步调整行高延迟
+            schedule_row_resize(self.main_data_grid, max(40, actual_delay + 40))
+        except Exception as e:
+            self.log_manager.error(f"启动列宽调整定时器失败: {e}")
+
+    def _schedule_main_resize_retry(self, sheet_name: str, delay_ms: int = 200):
+        """在列头尚未就绪时安排后续重试，防止自动扩宽永久失效"""
+        try:
+            if not hasattr(self, "_main_resize_retry_counts"):
+                self._main_resize_retry_counts = {}
+
+            retries = 0
+            if sheet_name:
+                retries = self._main_resize_retry_counts.get(sheet_name, 0)
+                if retries >= 5:
+                    self.log_manager.warning(
+                        f"工作表 '{sheet_name}' 列头仍未就绪，已停止自动扩宽重试"
+                    )
+                    return
+                self._main_resize_retry_counts[sheet_name] = retries + 1
+
+            # 关键修复7：增加重试延迟，给view更多时间同步
+            next_delay = max(delay_ms, 200)  # 最小200ms
+            if retries:
+                next_delay = min(1000, next_delay + retries * 150)  # 递增延迟，最大1秒
+
+            self.log_manager.info(
+                f"列头未就绪，{sheet_name or '当前工作表'} {retries + 1}/5 次重试将在 {next_delay}ms 后执行"
+            )
+            self.schedule_main_table_resize(next_delay)
+        except Exception as e:
+            self.log_manager.warning(f"安排列宽重试失败: {e}")
+
+    def _on_main_header_section_pressed(self, logical_index: int):
+        """用户开始调整列宽时停止待触发的自动调整"""
+        if hasattr(self, "_main_resize_timer") and self._main_resize_timer.isActive():
+            self._main_resize_timer.stop()
+
+    def _on_main_header_section_resized(
+        self, logical_index: int, old_size: int, new_size: int
+    ):
+        """记录用户手动调整的列宽"""
+        if self._main_auto_resizing:
+            return
+
+        if logical_index >= 2:
+            self._user_column_widths[logical_index] = new_size
+
+    def adjust_main_table_columns(self):
+        """根据内容调整主数据网格列宽 - 动态识别列名并应用相应规则"""
+        if not hasattr(self, "main_data_grid"):
+            return
+
+        header = self.main_data_grid.header()
+        model = self.main_data_grid.model()
+        if not header or not model:
+            return
+
+        current_sheet = ""
+        if hasattr(model, "active_sheet_name"):
+            current_sheet = getattr(model, "active_sheet_name", "") or ""
+        elif hasattr(self.target_model, "active_sheet_name"):
+            current_sheet = getattr(self.target_model, "active_sheet_name", "") or ""
+
+        # 关键修复5：添加view和model同步检查
+        # 检查header的列数是否与model的列数一致
+        header_count = header.count() if header else 0
+        model_column_count = model.columnCount() if model else 0
+
+        if header_count != model_column_count:
+            self.log_manager.warning(
+                f"View和Model未同步: header列数={header_count}, model列数={model_column_count}"
+            )
+            # 如果不同步，安排重试
+            self._schedule_main_resize_retry(current_sheet, 200)
+            return
+
+        # 检查model是否有headers属性
+        if not hasattr(model, "headers"):
+            self.log_manager.warning("主数据表模型缺少headers属性，使用fallback模式")
+            # 使用model.columnCount()生成简单headers作为fallback
+            if model.columnCount() > 0:
+                headers = [f"列{i+1}" for i in range(model.columnCount())]
+            else:
+                self._schedule_main_resize_retry(current_sheet, 200)
+                return
+        else:
+            headers = getattr(model, "headers", []) or []
+
+        if not headers or model.columnCount() == 0:
+            # 只在真的没有列时才重试
+            if model.columnCount() == 0:
+                self.log_manager.info("主数据表尚无列，将延迟重试自动扩宽")
+                self._schedule_main_resize_retry(current_sheet, 200)
+                return
+            # 有列但没headers，生成默认headers
+            self.log_manager.info("使用默认列头进行列宽调整")
+            headers = [f"列{i+1}" for i in range(model.columnCount())]
+
+        # 关键修复6：再次验证headers长度与列数是否匹配
+        if len(headers) != model.columnCount():
+            self.log_manager.warning(
+                f"Headers长度与列数不匹配: headers={len(headers)}, columns={model.columnCount()}"
+            )
+            # 生成正确长度的headers
+            headers = [
+                headers[i] if i < len(headers) else f"列{i+1}"
+                for i in range(model.columnCount())
+            ]
+
+        if current_sheet and current_sheet in self._main_resize_retry_counts:
+            self._main_resize_retry_counts.pop(current_sheet, None)
+
+        # 🔍 动态分析所有列，根据列名应用不同的宽度策略
+        adjustable_columns = {}  # {column_index: (min_width, max_width)}
+
+        self._main_auto_resizing = True
+        try:
+            for column in range(model.columnCount()):
+                # 🔧 修复：安全获取列名，添加边界检查
+                column_name = ""
+                try:
+                    if hasattr(model, "headers") and column < len(model.headers):
+                        column_name = model.headers[column] or ""
+                    else:
+                        # 如果headers不存在或索引越界，尝试从headerData获取
+                        header_data = model.headerData(
+                            column, Qt.Horizontal, Qt.DisplayRole
+                        )
+                        column_name = str(header_data) if header_data else ""
+                except (IndexError, AttributeError) as e:
+                    self.log_manager.warning(f"获取第{column}列名称失败: {e}")
+                    continue
+
+                if not column_name:
+                    continue
+
+                # 根据列名决定处理策略
+                if column_name == "状态":
+                    # 状态列：固定70px，不可调整
+                    self.main_data_grid.setColumnWidth(column, 70)
+                    header.setSectionResizeMode(column, QHeaderView.Fixed)
+
+                elif column_name == "级别":
+                    # 级别列：固定70px，不可调整
+                    self.main_data_grid.setColumnWidth(column, 70)
+                    header.setSectionResizeMode(column, QHeaderView.Fixed)
+
+                elif column_name == "行次":
+                    # 行次列：固定宽度，不参与自动扩宽
+                    self.main_data_grid.setColumnWidth(column, ROW_NUMBER_COLUMN_WIDTH)
+                    header.setSectionResizeMode(column, QHeaderView.Fixed)
+                    self._user_column_widths.pop(column, None)
+                    # 不添加到adjustable_columns，因此不参与自动扩宽
+
+                elif "名称" in column_name or "项目" in column_name:
+                    # 项目名称类列：自动扩宽，范围200-520px
+                    adjustable_columns[column] = (200, 520)
+
+                elif "公式" in column_name:
+                    # 公式类列：自动扩宽，范围240-600px
+                    adjustable_columns[column] = (240, 600)
+
+                elif (
+                    "预览" in column_name
+                    or "值" in column_name
+                    or "结果" in column_name
+                ):
+                    # 预览值类列：自动扩宽，范围120-240px
+                    adjustable_columns[column] = (120, 240)
+
+                else:
+                    # 其他列：自动扩宽，使用通用范围100-300px
+                    adjustable_columns[column] = (100, 300)
+
+            # 对需要自动扩宽的列执行内容自适应
+            for column, (min_width, max_width) in adjustable_columns.items():
+                if column >= model.columnCount():
+                    continue
+
+                if column in self._user_column_widths:
+                    # 尊重用户手动设置的列宽
+                    continue
+
+                header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+                self.main_data_grid.resizeColumnToContents(column)
+                width = self.main_data_grid.columnWidth(column)
+                bounded_width = max(min_width, min(width, max_width))
+                self.main_data_grid.setColumnWidth(column, bounded_width)
+                header.setSectionResizeMode(column, QHeaderView.Interactive)
+
+        except Exception as e:
+            self.log_manager.error(f"调整主表格列宽时出错: {e}")
+            import traceback
+
+            self.log_manager.info(traceback.format_exc())
+        finally:
+            self._main_auto_resizing = False
+
+        # ✅ 在所有列处理完成后，再次确认"行次"列的设置
+        # 防止在处理其他列时被Qt的布局更新机制重置
+        try:
+            row_num_column_index = None
+            for column in range(model.columnCount()):
+                # 安全获取列名
+                column_name = ""
+                if hasattr(model, "headers") and column < len(model.headers):
+                    column_name = model.headers[column] or ""
+                if column_name == "行次":
+                    row_num_column_index = column
+                    break
+
+            if row_num_column_index is not None:
+                # 最后强制锁定"行次"列宽，防止被后续自动调整覆盖
+                self._user_column_widths.pop(row_num_column_index, None)
+                self.main_data_grid.setColumnWidth(
+                    row_num_column_index, ROW_NUMBER_COLUMN_WIDTH
+                )
+                header.setSectionResizeMode(row_num_column_index, QHeaderView.Fixed)
+        except Exception as e:
+            self.log_manager.warning(f"设置行次列宽度时出错: {e}")
+
+        # 🔧 关键修复：智能填充以占满viewport，避免右侧空白
+        try:
+            # 构建min_widths和max_widths字典
+            min_widths_dict = {}
+            max_widths_dict = {}
+            exclude_cols = []
+
+            for column in range(model.columnCount()):
+                column_name = ""
+                if hasattr(model, "headers") and column < len(model.headers):
+                    column_name = model.headers[column] or ""
+
+                # 固定列加入exclude列表
+                if column_name in ["状态", "级别", "行次"]:
+                    exclude_cols.append(column)
+                else:
+                    # 从adjustable_columns获取min/max值
+                    if column in adjustable_columns:
+                        min_width, max_width = adjustable_columns[column]
+                        min_widths_dict[column] = min_width
+                        max_widths_dict[column] = max_width
+                    else:
+                        # 如果不在adjustable_columns中，使用默认值
+                        min_widths_dict[column] = 100
+                        max_widths_dict[column] = 300
+
+            # 应用智能填充，确保占满整个viewport宽度
+            distribute_columns_evenly(
+                self.main_data_grid,
+                exclude_columns=exclude_cols,
+                min_widths=min_widths_dict,
+                max_widths=max_widths_dict,
+            )
+
+            self.log_manager.info("已应用智能填充，列宽占满容器宽度")
+
+        except Exception as e:
+            self.log_manager.warning(f"智能填充列宽时出错: {e}")
+            import traceback
+
+            self.log_manager.info(traceback.format_exc())
+
+        schedule_row_resize(self.main_data_grid, 80)
+
+    def reset_current_session(self):
+        """清空当前加载的工作簿与界面状态"""
+        if hasattr(self, "_autosave_timer"):
+            self._autosave_timer.stop()
+        self._autosave_suspended = False
+
+        self.workbook_manager = None
+        self.data_extractor = None
+        self.calculation_engine = None
+        self.file_manager = FileManager()
+
+        self.target_model.set_workbook_manager(None)
+        self.source_model.set_workbook_manager(None)
+
+        empty_model = QStandardItemModel()
+        self.main_data_grid.setModel(self.target_model)
+        self._apply_main_header_layout()
+        self.source_tree.setModel(empty_model)
+        apply_multirow_header(self.source_tree, {}, 1, stretch_last=False)
+        self.source_tree.all_source_items = {}
+        self.source_tree.current_sheet = None
+        self.source_tree.available_sheets = []
+        self.source_tree.sheet_column_configs = {}
+        self.source_tree.sheet_column_metadata = {}
+        if hasattr(self.source_tree, "sheet_combo"):
+            self.source_tree.sheet_combo.blockSignals(True)
+            self.source_tree.sheet_combo.clear()
+            self.source_tree.sheet_combo.blockSignals(False)
+        if hasattr(self.source_tree, "search_line"):
+            self.source_tree.search_line.blockSignals(True)
+            self.source_tree.search_line.clear()
+            self.source_tree.search_line.blockSignals(False)
+
+        # 清空主数据表的工作表选择和搜索框
+        if hasattr(self, "target_sheet_combo"):
+            self.target_sheet_combo.blockSignals(True)
+            self.target_sheet_combo.clear()
+            self.target_sheet_combo.blockSignals(False)
+        if hasattr(self, "target_search_line"):
+            self.target_search_line.blockSignals(True)
+            self.target_search_line.clear()
+            self.target_search_line.blockSignals(False)
+
+        if hasattr(self, "property_table"):
+            self.property_table.set_properties({})
+
+        if hasattr(self, "classification_summary"):
+            self.classification_summary.setText("请先加载Excel文件并确认工作表分类")
+
+        self._user_column_widths.clear()
+        self._main_auto_resizing = False
+        if hasattr(self, "_main_resize_retry_counts"):
+            self._main_resize_retry_counts.clear()
+        self.show_target_source_message("请选择目标项以查看来源详情。")
+        self._source_lookup_index = {}
+
+        self.update_toolbar_states()
+        self.schedule_main_table_resize(0)
+
+    def update_toolbar_states(self):
+        """根据当前数据刷新工具栏按钮状态"""
+        has_workbook = self.workbook_manager is not None
+        has_results = bool(
+            self.workbook_manager
+            and getattr(self.workbook_manager, "calculation_results", {})
+        )
+
+        self.load_files_btn.setEnabled(True)
+        self.ai_analyze_btn.setEnabled(has_workbook)
+        self.calculate_btn.setEnabled(has_workbook)
+        self.export_btn.setEnabled(has_results)
+        self.help_btn.setEnabled(True)
+
+        # 清除按钮的启用逻辑
+        has_formulas = bool(
+            self.workbook_manager and self.workbook_manager.mapping_formulas
+        )
+        has_current_sheet = bool(
+            has_formulas
+            and hasattr(self.target_model, "active_sheet_name")
+            and self.target_model.active_sheet_name
+        )
+
+        # 安全检查：确保按钮存在再设置状态
+        if hasattr(self, "clear_sheet_formulas_btn") and self.clear_sheet_formulas_btn:
+            self.clear_sheet_formulas_btn.setEnabled(has_current_sheet)
+        if hasattr(self, "clear_all_formulas_btn") and self.clear_all_formulas_btn:
+            self.clear_all_formulas_btn.setEnabled(has_formulas)
+
+    def show_sheet_classification_dialog(
+        self, sheet_name: str, auto_classification: str
+    ) -> str:
         """显示工作表分类确认对话框
 
         Args:
@@ -2671,15 +3547,68 @@ class MainWindow(QMainWindow):
     def load_files(self):
         """加载Excel文件"""
         file_paths, _ = QFileDialog.getOpenFileNames(
-            self, "选择Excel文件", "",
-            "Excel Files (*.xlsx *.xls);;All Files (*)"
+            self, "选择Excel文件", "", "Excel Files (*.xlsx *.xls);;All Files (*)"
         )
 
         if not file_paths:
             return
 
+        existing_path = None
+        if self.workbook_manager and getattr(self.workbook_manager, "file_path", None):
+            existing_path = Path(self.workbook_manager.file_path)
+
+        if existing_path:
+            msg = QMessageBox(self)
+            msg.setIcon(QMessageBox.Warning)
+            msg.setWindowTitle("重新加载文件")
+            msg.setText(f"当前已加载文件：\n<b>{existing_path.name}</b>")
+            msg.setInformativeText("重新加载将清空当前所有数据和结果，是否继续？")
+            msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            msg.setDefaultButton(QMessageBox.No)
+            msg.setStyleSheet(
+                """
+                QMessageBox {
+                    background-color: #fdfdfd;
+                    border-radius: 12px;
+                }
+                QMessageBox QLabel {
+                    color: #2c3e50;
+                    font-size: 13px;
+                }
+                QMessageBox QPushButton {
+                    min-width: 88px;
+                    min-height: 30px;
+                    border-radius: 6px;
+                    background-color: #3498db;
+                    color: white;
+                    font-weight: bold;
+                    padding: 6px 14px;
+                }
+                QMessageBox QPushButton:hover {
+                    background-color: #2980b9;
+                }
+                QMessageBox QPushButton:pressed {
+                    background-color: #1f6392;
+                }
+            """
+            )
+
+            if msg.exec() != QMessageBox.Yes:
+                self.log_manager.info("用户取消重新加载文件")
+                return
+
+        self.load_files_btn.setEnabled(False)
+
+        if existing_path:
+            self.log_manager.info("清空当前会话，准备重新加载文件")
+            self.reset_current_session()
+
         try:
             self.log_manager.info(f"开始加载 {len(file_paths)} 个文件...")
+
+            if not existing_path:
+                # 确保初次加载时状态干净
+                self.reset_current_session()
 
             success, message = self.file_manager.load_excel_files(file_paths)
 
@@ -2688,18 +3617,21 @@ class MainWindow(QMainWindow):
                 self.log_manager.success(f"文件加载成功: {message}")
 
                 # 直接显示拖拽式工作表分类界面
-                if self.workbook_manager and (self.workbook_manager.flash_report_sheets or self.workbook_manager.data_source_sheets):
+                if self.workbook_manager and (
+                    self.workbook_manager.flash_report_sheets
+                    or self.workbook_manager.data_source_sheets
+                ):
                     self.show_classification_dialog()
                     self.log_manager.info("工作表已自动识别，请在对话框中调整分类")
-
 
                 else:
                     # 没有找到工作表
                     self.log_manager.warning("未找到任何工作表")
-                    self.update_sheet_explorer()
                     # 重置摘要显示
-                    if hasattr(self, 'classification_summary'):
-                        self.classification_summary.setText("未找到任何工作表，请检查Excel文件")
+                    if hasattr(self, "classification_summary"):
+                        self.classification_summary.setText(
+                            "未找到任何工作表，请检查Excel文件"
+                        )
 
             else:
                 self.log_manager.error(f"文件加载失败: {message}")
@@ -2709,6 +3641,9 @@ class MainWindow(QMainWindow):
             error_msg = f"加载文件时发生异常: {str(e)}"
             self.log_manager.error(error_msg)
             QMessageBox.critical(self, "错误", error_msg)
+        finally:
+            self.load_files_btn.setEnabled(True)
+            self.update_toolbar_states()
 
     def apply_final_classifications(self, final_classifications):
         """根据用户的最终分类重新组织工作簿管理器"""
@@ -2725,7 +3660,10 @@ class MainWindow(QMainWindow):
         all_sheets = {}
 
         # 从workbook_manager.worksheets获取完整的工作表信息
-        if hasattr(self.workbook_manager, 'worksheets') and self.workbook_manager.worksheets:
+        if (
+            hasattr(self.workbook_manager, "worksheets")
+            and self.workbook_manager.worksheets
+        ):
             all_sheets = dict(self.workbook_manager.worksheets)
         else:
             # 如果没有worksheets，从列表中重建（兼容性处理）
@@ -2733,7 +3671,10 @@ class MainWindow(QMainWindow):
                 if isinstance(sheet, str):
                     # 如果是字符串，创建临时的工作表信息
                     from models.data_models import WorksheetInfo, SheetType
-                    sheet_info = WorksheetInfo(name=sheet, sheet_type=SheetType.FLASH_REPORT)
+
+                    sheet_info = WorksheetInfo(
+                        name=sheet, sheet_type=SheetType.FLASH_REPORT
+                    )
                     all_sheets[sheet] = sheet_info
                 else:
                     # 如果是对象，直接使用
@@ -2743,20 +3684,23 @@ class MainWindow(QMainWindow):
                 if isinstance(sheet, str):
                     # 如果是字符串，创建临时的工作表信息
                     from models.data_models import WorksheetInfo, SheetType
-                    sheet_info = WorksheetInfo(name=sheet, sheet_type=SheetType.DATA_SOURCE)
+
+                    sheet_info = WorksheetInfo(
+                        name=sheet, sheet_type=SheetType.DATA_SOURCE
+                    )
                     all_sheets[sheet] = sheet_info
                 else:
                     # 如果是对象，直接使用
                     all_sheets[sheet.name] = sheet
 
         # 根据最终分类重新分配工作表
-        for sheet_name in final_classifications['flash_reports']:
+        for sheet_name in final_classifications["flash_reports"]:
             if sheet_name in all_sheets:
                 sheet = all_sheets[sheet_name]
                 sheet.sheet_type = SheetType.FLASH_REPORT
                 new_flash_reports.append(sheet)
 
-        for sheet_name in final_classifications['data_sources']:
+        for sheet_name in final_classifications["data_sources"]:
             if sheet_name in all_sheets:
                 sheet = all_sheets[sheet_name]
                 sheet.sheet_type = SheetType.DATA_SOURCE
@@ -2767,11 +3711,15 @@ class MainWindow(QMainWindow):
         self.workbook_manager.data_source_sheets = new_data_sources
 
         # 记录跳过和禁用的工作表
-        if final_classifications['skipped']:
-            self.log_manager.info(f"跳过的工作表: {', '.join(final_classifications['skipped'])}")
+        if final_classifications["skipped"]:
+            self.log_manager.info(
+                f"跳过的工作表: {', '.join(final_classifications['skipped'])}"
+            )
 
-        if final_classifications['disabled']:
-            self.log_manager.info(f"禁用的工作表: {', '.join(final_classifications['disabled'])}")
+        if final_classifications["disabled"]:
+            self.log_manager.info(
+                f"禁用的工作表: {', '.join(final_classifications['disabled'])}"
+            )
 
     def show_classification_dialog(self):
         """显示工作表分类对话框"""
@@ -2800,17 +3748,18 @@ class MainWindow(QMainWindow):
             # 更新工作簿管理器的分类
             if self.workbook_manager:
                 # 重新设置工作表分类
-                self.workbook_manager.flash_report_sheets = classifications.get('flash_reports', [])
-                self.workbook_manager.data_source_sheets = classifications.get('data_sources', [])
+                self.workbook_manager.flash_report_sheets = classifications.get(
+                    "flash_reports", []
+                )
+                self.workbook_manager.data_source_sheets = classifications.get(
+                    "data_sources", []
+                )
 
                 # 更新分类摘要显示
-                self.update_navigator_summary_auto(classifications)
-
-                # 更新工作表浏览器
-                self.update_sheet_explorer()
+                self.update_navigator_summary(classifications, status="final")
 
                 # 如果有数据来源表，开始提取数据
-                if classifications.get('data_sources'):
+                if classifications.get("data_sources"):
                     self.log_manager.info("分类确认完成，开始自动提取数据...")
                     self.extract_data()
 
@@ -2822,8 +3771,10 @@ class MainWindow(QMainWindow):
         # 处理不同参数格式的兼容性
         if len(args) >= 2:
             sheet_name, new_type = args[0], args[1]
-            if hasattr(new_type, 'value'):
-                type_name = "快报表" if new_type.value == 'flash_report' else "数据来源表"
+            if hasattr(new_type, "value"):
+                type_name = (
+                    "快报表" if new_type.value == "flash_report" else "数据来源表"
+                )
             else:
                 type_name = str(new_type)
             self.log_manager.info(f"🔄 '{sheet_name}' 分类更新为: {type_name}")
@@ -2835,7 +3786,6 @@ class MainWindow(QMainWindow):
         """用户确认分类时的回调（保留兼容性）"""
         # 这个方法现在由show_classification_dialog处理
         self.log_manager.info("分类确认处理已转移到对话框")
-
 
     def show_classification_results(self, final_classifications):
         """显示分类结果"""
@@ -2849,21 +3799,27 @@ class MainWindow(QMainWindow):
         # 构建结果文本
         result_text = "✅ 工作表分类完成！\n\n"
 
-        if final_classifications['flash_reports']:
-            result_text += f"📊 快报表 ({len(final_classifications['flash_reports'])} 个):\n"
-            for sheet in final_classifications['flash_reports']:
+        if final_classifications["flash_reports"]:
+            result_text += (
+                f"📊 快报表 ({len(final_classifications['flash_reports'])} 个):\n"
+            )
+            for sheet in final_classifications["flash_reports"]:
                 result_text += f"  • {sheet}\n"
             result_text += "\n"
 
-        if final_classifications['data_sources']:
-            result_text += f"📋 数据来源表 ({len(final_classifications['data_sources'])} 个):\n"
-            for sheet in final_classifications['data_sources']:
+        if final_classifications["data_sources"]:
+            result_text += (
+                f"📋 数据来源表 ({len(final_classifications['data_sources'])} 个):\n"
+            )
+            for sheet in final_classifications["data_sources"]:
                 result_text += f"  • {sheet}\n"
             result_text += "\n"
 
-        if final_classifications['cancelled']:
-            result_text += f"❌ 已取消处理 ({len(final_classifications['cancelled'])} 个):\n"
-            for sheet in final_classifications['cancelled']:
+        if final_classifications["cancelled"]:
+            result_text += (
+                f"❌ 已取消处理 ({len(final_classifications['cancelled'])} 个):\n"
+            )
+            for sheet in final_classifications["cancelled"]:
                 result_text += f"  • {sheet}\n"
             result_text += "\n"
 
@@ -2874,88 +3830,61 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
         # 同时在导航区显示摘要信息
-        self.update_navigator_summary(final_classifications)
+        self.update_navigator_summary(final_classifications, status="final")
 
-    def update_navigator_summary(self, final_classifications):
-        """更新导航区域的分类摘要"""
-        if not hasattr(self, 'classification_summary'):
+    def update_navigator_summary(self, classifications, status: str = "auto"):
+        """更新导航区域分类摘要"""
+        if not hasattr(self, "classification_summary"):
             return
 
-        # 构建摘要文本
-        summary_text = "✅ 工作表分类已确认\n\n"
+        is_final = status == "final"
+        title_prefix = "✅ 分类已确认" if is_final else "🔄 自动分类结果 (待确认)"
 
-        # 快报表信息
-        if final_classifications['flash_reports']:
-            summary_text += f"📊 快报表 ({len(final_classifications['flash_reports'])} 个):\n"
-            for sheet in final_classifications['flash_reports']:
+        summary_text = f"{title_prefix}\n\n"
+
+        flash_reports = classifications.get("flash_reports", [])
+        data_sources = classifications.get("data_sources", [])
+        cancelled = classifications.get("cancelled", [])
+
+        if flash_reports:
+            summary_text += f"📊 快报表 ({len(flash_reports)} 个):\n"
+            for sheet in flash_reports:
                 summary_text += f"  • {sheet}\n"
             summary_text += "\n"
         else:
             summary_text += "📊 快报表: 无\n\n"
 
-        # 数据来源表信息
-        if final_classifications['data_sources']:
-            summary_text += f"📋 数据来源表 ({len(final_classifications['data_sources'])} 个):\n"
-            for sheet in final_classifications['data_sources']:
+        if data_sources:
+            summary_text += f"📋 数据来源表 ({len(data_sources)} 个):\n"
+            for sheet in data_sources:
                 summary_text += f"  • {sheet}\n"
             summary_text += "\n"
         else:
             summary_text += "📋 数据来源表: 无\n\n"
 
-        # 已取消信息
-        if final_classifications['cancelled']:
-            summary_text += f"❌ 已取消 ({len(final_classifications['cancelled'])} 个):\n"
-            for sheet in final_classifications['cancelled']:
+        if cancelled:
+            summary_text += f"❌ 已取消 ({len(cancelled)} 个):\n"
+            for sheet in cancelled:
                 summary_text += f"  • {sheet}\n"
             summary_text += "\n"
 
-        summary_text += "💡 可以开始数据提取操作"
+        if is_final:
+            summary_text += "💡 分类确认完成，可继续后续操作"
+        else:
+            summary_text += "⚠️ 请检查分类结果并确认"
 
-        # 更新摘要显示
         self.classification_summary.setText(summary_text)
 
-        # 设置状态栏信息
-        total_active = len(final_classifications['flash_reports']) + len(final_classifications['data_sources'])
-        self.statusBar().showMessage(
-            f"分类完成 - 活跃工作表: {total_active} 个, 已取消: {len(final_classifications['cancelled'])} 个"
-        )
-
-    def update_navigator_summary_auto(self, auto_classifications):
-        """更新导航区域的自动分类摘要"""
-        if not hasattr(self, 'classification_summary'):
-            return
-
-        # 构建摘要文本（自动分类阶段）
-        summary_text = "🔄 自动分类结果 (待确认)\n\n"
-
-        # 快报表信息
-        if auto_classifications['flash_reports']:
-            summary_text += f"📊 快报表 ({len(auto_classifications['flash_reports'])} 个):\n"
-            for sheet in auto_classifications['flash_reports']:
-                summary_text += f"  • {sheet}\n"
-            summary_text += "\n"
+        if is_final:
+            total_active = len(flash_reports) + len(data_sources)
+            self.statusBar().showMessage(
+                f"分类完成 - 活跃工作表: {total_active} 个, 已取消: {len(cancelled)} 个"
+            )
         else:
-            summary_text += "📊 快报表: 无\n\n"
-
-        # 数据来源表信息
-        if auto_classifications['data_sources']:
-            summary_text += f"📋 数据来源表 ({len(auto_classifications['data_sources'])} 个):\n"
-            for sheet in auto_classifications['data_sources']:
-                summary_text += f"  • {sheet}\n"
-            summary_text += "\n"
-        else:
-            summary_text += "📋 数据来源表: 无\n\n"
-
-        summary_text += "⚠️ 请检查分类结果并确认"
-
-        # 更新摘要显示
-        self.classification_summary.setText(summary_text)
-
-        # 设置状态栏信息
-        total_sheets = len(auto_classifications['flash_reports']) + len(auto_classifications['data_sources'])
-        self.statusBar().showMessage(
-            f"自动分类完成 - 共识别 {total_sheets} 个工作表，请检查并确认分类"
-        )
+            total_sheets = len(flash_reports) + len(data_sources)
+            self.statusBar().showMessage(
+                f"自动分类完成 - 共识别 {total_sheets} 个工作表，请检查并确认分类"
+            )
 
     def apply_final_classifications_from_widget(self, final_classifications):
         """根据拖拽界面的最终分类重新组织工作簿管理器"""
@@ -2972,7 +3901,10 @@ class MainWindow(QMainWindow):
         all_sheets = {}
 
         # 从workbook_manager.worksheets获取完整的工作表信息
-        if hasattr(self.workbook_manager, 'worksheets') and self.workbook_manager.worksheets:
+        if (
+            hasattr(self.workbook_manager, "worksheets")
+            and self.workbook_manager.worksheets
+        ):
             all_sheets = dict(self.workbook_manager.worksheets)
         else:
             # 如果没有worksheets，从列表中重建（兼容性处理）
@@ -2980,7 +3912,10 @@ class MainWindow(QMainWindow):
                 if isinstance(sheet, str):
                     # 如果是字符串，创建临时的工作表信息
                     from models.data_models import WorksheetInfo, SheetType
-                    sheet_info = WorksheetInfo(name=sheet, sheet_type=SheetType.FLASH_REPORT)
+
+                    sheet_info = WorksheetInfo(
+                        name=sheet, sheet_type=SheetType.FLASH_REPORT
+                    )
                     all_sheets[sheet] = sheet_info
                 else:
                     # 如果是对象，直接使用
@@ -2990,20 +3925,23 @@ class MainWindow(QMainWindow):
                 if isinstance(sheet, str):
                     # 如果是字符串，创建临时的工作表信息
                     from models.data_models import WorksheetInfo, SheetType
-                    sheet_info = WorksheetInfo(name=sheet, sheet_type=SheetType.DATA_SOURCE)
+
+                    sheet_info = WorksheetInfo(
+                        name=sheet, sheet_type=SheetType.DATA_SOURCE
+                    )
                     all_sheets[sheet] = sheet_info
                 else:
                     # 如果是对象，直接使用
                     all_sheets[sheet.name] = sheet
 
         # 根据最终分类重新分配工作表
-        for sheet_name in final_classifications['flash_reports']:
+        for sheet_name in final_classifications["flash_reports"]:
             if sheet_name in all_sheets:
                 sheet = all_sheets[sheet_name]
                 sheet.sheet_type = SheetType.FLASH_REPORT
                 new_flash_reports.append(sheet)
 
-        for sheet_name in final_classifications['data_sources']:
+        for sheet_name in final_classifications["data_sources"]:
             if sheet_name in all_sheets:
                 sheet = all_sheets[sheet_name]
                 sheet.sheet_type = SheetType.DATA_SOURCE
@@ -3014,77 +3952,10 @@ class MainWindow(QMainWindow):
         self.workbook_manager.data_source_sheets = new_data_sources
 
         # 记录取消的工作表
-        if final_classifications['cancelled']:
-            self.log_manager.info(f"已取消的工作表: {', '.join(final_classifications['cancelled'])}")
-
-    def open_ai_config_dialog(self):
-        """打开AI配置对话框"""
-        try:
-            from widgets.ai_config_dialog import AIConfigurationDialog
-
-            dialog = AIConfigurationDialog(self)
-            if dialog.exec():
-                # 获取保存的配置
-                config = dialog.get_configuration()
-
-                # 更新快速配置界面
-                self.ai_url_edit.setText(config.get('api_url', ''))
-                self.ai_model_edit.setText(config.get('model', ''))
-
-                # 更新配置信息显示
-                self.ai_config_info.setText(f"已配置: {config.get('model', 'Unknown')} | 流式: {'是' if config.get('stream', False) else '否'}")
-
-                self.log_manager.info("AI配置已更新")
-
-        except Exception as e:
-            self.log_manager.error(f"打开AI配置对话框失败: {str(e)}")
-            QMessageBox.critical(self, "错误", f"无法打开AI配置对话框:\n{str(e)}")
-
-    def quick_test_ai(self):
-        """快速测试AI连接"""
-        api_url = self.ai_url_edit.text().strip()
-        api_key = self.ai_key_edit.text().strip()
-        model = self.ai_model_edit.text().strip()
-
-        if not api_key:
-            QMessageBox.warning(self, "警告", "请输入API密钥！")
-            return
-
-        try:
-            self.log_manager.info("开始快速AI连接测试...")
-
-            # 创建简单的测试请求
-            import requests
-
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}"
-            }
-
-            payload = {
-                "model": model,
-                "messages": [
-                    {"role": "user", "content": "HI"}
-                ],
-                "max_tokens": 50
-            }
-
-            response = requests.post(api_url, headers=headers, json=payload, timeout=10)
-
-            if response.status_code == 200:
-                result = response.json()
-                content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
-                self.log_manager.success(f"✅ AI连接测试成功！回复: {content}")
-                QMessageBox.information(self, "测试成功", f"AI连接正常！\n回复: {content}")
-            else:
-                error_msg = f"请求失败: {response.status_code} - {response.text}"
-                self.log_manager.error(f"❌ AI连接测试失败: {error_msg}")
-                QMessageBox.warning(self, "测试失败", error_msg)
-
-        except Exception as e:
-            error_msg = f"连接失败: {str(e)}"
-            self.log_manager.error(f"❌ AI连接测试异常: {error_msg}")
-            QMessageBox.critical(self, "测试异常", error_msg)
+        if final_classifications["cancelled"]:
+            self.log_manager.info(
+                f"已取消的工作表: {', '.join(final_classifications['cancelled'])}"
+            )
 
     def extract_data(self):
         """提取数据"""
@@ -3106,32 +3977,70 @@ class MainWindow(QMainWindow):
             # 显示统计信息
             targets_count = len(self.workbook_manager.target_items)
             sources_count = len(self.workbook_manager.source_items)
-            self.log_manager.success(f"数据提取完成: 目标项 {targets_count} 个, 来源项 {sources_count} 个")
+            self.log_manager.success(
+                f"数据提取完成: 目标项 {targets_count} 个, 来源项 {sources_count} 个"
+            )
 
             # 更新所有模型
             self.target_model.set_workbook_manager(self.workbook_manager)
+            self._target_column_config = None
+            self._ensure_target_column_config()
+            self.apply_target_column_config()
+            self._apply_main_header_layout()
+            self.target_column_config_btn.setEnabled(True)
+
+            loaded_count = self.file_manager.load_saved_formulas(self.workbook_manager)
+            if loaded_count:
+                self.log_manager.info(
+                    f"已恢复 {loaded_count} 条历史映射公式，正在重新计算……"
+                )
+                self._autosave_suspended = True
+                self.handle_formula_updates(
+                    list(self.workbook_manager.mapping_formulas.keys()),
+                    reason="autosave_restore",
+                )
+                self._autosave_suspended = False
+                self.schedule_autosave()
 
             # 连接导航信号
             self.target_model.itemSelected.connect(self.on_target_item_selected)
             self.target_model.navigationRequested.connect(self.on_navigation_requested)
 
-            # 更新分类筛选器
-            self.update_category_filter()
             self.source_model.set_workbook_manager(self.workbook_manager)
 
             # 使用增强的来源项显示
+            self.source_tree.set_column_metadata(
+                self.workbook_manager.source_sheet_columns
+            )
             self.source_tree.populate_source_items(self.workbook_manager.source_items)
-            self.sheet_explorer_model.set_workbook_manager(self.workbook_manager)
+            self._rebuild_source_lookup_index()
+
+            # 更新主数据表的工作表下拉菜单
+            if hasattr(self, "target_sheet_combo"):
+                self.target_sheet_combo.blockSignals(True)
+                self.target_sheet_combo.clear()
+                # 添加所有快报表到下拉菜单
+                flash_report_sheets = self.workbook_manager.flash_report_sheets
+                self.target_sheet_combo.addItems(flash_report_sheets)
+                # 如果有快报表，默认选择第一个
+                if flash_report_sheets:
+                    self.target_sheet_combo.setCurrentIndex(0)
+                self.target_sheet_combo.blockSignals(False)
+
+                # ✅ 手动触发工作表切换，确保正确初始化第一个工作表
+                if flash_report_sheets:
+                    first_sheet = flash_report_sheets[0]
+                    self.target_model.set_active_sheet(first_sheet)
+                    self._apply_main_header_layout()
+                    self.log_manager.info(f"已初始化主表格，显示工作表: {first_sheet}")
 
             # 更新公式编辑器的工作簿管理器
             self.formula_editor.set_workbook_manager(self.workbook_manager)
             self.formula_delegate.workbook_manager = self.workbook_manager
 
-            # 展开工作表浏览器
-            self.sheet_explorer.expandAll()
-
-            self.ai_analyze_btn.setEnabled(True)
-            self.calculate_btn.setEnabled(True)
+            self.schedule_main_table_resize(0)
+            self.update_toolbar_states()
+            self.refresh_target_source_summary()
 
         except Exception as e:
             error_msg = f"数据提取时发生异常: {str(e)}"
@@ -3150,11 +4059,17 @@ class MainWindow(QMainWindow):
             self.progress_bar.setRange(0, 100)
             self.progress_bar.setValue(10)
 
-            # 配置AI参数
+            # 从ChatController获取AI配置
+            if not self.chat_controller or not self.chat_controller.current_config:
+                QMessageBox.warning(self, "警告", "AI服务未初始化,请先配置AI")
+                self.progress_bar.setVisible(False)
+                return
+
+            config = self.chat_controller.current_config
             ai_config = {
-                "api_url": self.ai_url_edit.text(),
-                "api_key": self.ai_key_edit.text(),
-                "model": self.ai_model_edit.text()
+                "api_url": config.base_url,
+                "api_key": config.api_key,
+                "model": config.model,
             }
 
             if not ai_config["api_key"]:
@@ -3166,10 +4081,11 @@ class MainWindow(QMainWindow):
 
             # 构建AI请求
             from models.data_models import AIAnalysisRequest
+
             ai_request = AIAnalysisRequest(
                 api_url=ai_config["api_url"],
                 api_key=ai_config["api_key"],
-                model=ai_config["model"]
+                model=ai_config["model"],
             )
 
             # 添加目标项
@@ -3202,10 +4118,13 @@ class MainWindow(QMainWindow):
                 # 更新模型显示
                 self.target_model.layoutChanged.emit()
 
-                QMessageBox.information(self, "成功",
+                QMessageBox.information(
+                    self,
+                    "成功",
                     f"AI分析完成！\n生成了 {applied_count} 个公式映射\n"
                     f"有效映射: {ai_response.valid_mappings}\n"
-                    f"无效映射: {ai_response.invalid_mappings}")
+                    f"无效映射: {ai_response.invalid_mappings}",
+                )
 
             else:
                 self.log_manager.error(f"AI分析失败: {ai_response.error_message}")
@@ -3230,13 +4149,13 @@ class MainWindow(QMainWindow):
             request_data = {
                 "task_description": ai_request.task_description,
                 "target_items": ai_request.target_items,
-                "source_items": ai_request.source_items
+                "source_items": ai_request.source_items,
             }
 
             # 构建请求头
             headers = {
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {ai_request.api_key}"
+                "Authorization": f"Bearer {ai_request.api_key}",
             }
 
             # 构建请求体（符合OpenAI格式）
@@ -3256,19 +4175,19 @@ class MainWindow(QMainWindow):
 2. 根据你的专业会计知识，从 source_items 列表中找到一个或多个相关的项目，构建出计算 target_item 值的数学公式。
 3. 公式只能使用 +, -, *, / 四种运算符。
 4. 输出格式必须严格遵守JSON规范。返回一个名为 "mappings" 的列表，列表中的每个对象包含 "target_id" 和对应的 "formula" 字符串。
-5. formula字符串的格式必须为：[工作表名:"项目名"](单元格地址)。例如：[利润表:"营业成本"](D12) + [利润表:"税金及附加"](D15)。
+5. formula字符串的格式必须为：[工作表名]单元格，如 [利润表]D12 + [利润表]D15。
 6. 如果一个 target_item 无法从 source_items 中找到任何映射关系，请不要为它创建映射条目。
 7. 分析时要特别注意 target_items 的层级关系和名称中的关键词，例如"减："、"其中："、"加："等，这些都暗示了计算逻辑。
 
-请像一名严谨的会计师一样思考，确保公式的准确性。"""
+请像一名严谨的会计师一样思考，确保公式的准确性。""",
                     },
                     {
                         "role": "user",
-                        "content": json.dumps(request_data, ensure_ascii=False)
-                    }
+                        "content": json.dumps(request_data, ensure_ascii=False),
+                    },
                 ],
                 "temperature": ai_request.temperature,
-                "max_tokens": ai_request.max_tokens
+                "max_tokens": ai_request.max_tokens,
             }
 
             self.log_manager.info(f"发送AI请求到: {ai_request.api_url}")
@@ -3277,13 +4196,14 @@ class MainWindow(QMainWindow):
 
             # 发送请求
             import time
+
             start_time = time.time()
 
             response = requests.post(
                 ai_request.api_url,
                 headers=headers,
                 json=request_body,
-                timeout=ai_request.timeout
+                timeout=ai_request.timeout,
             )
 
             response_time = time.time() - start_time
@@ -3298,7 +4218,11 @@ class MainWindow(QMainWindow):
                 ai_response.model_used = ai_request.model
 
                 # 提取AI生成的内容
-                ai_content = response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                ai_content = (
+                    response_data.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                )
 
                 # 尝试解析JSON内容
                 try:
@@ -3331,14 +4255,18 @@ class MainWindow(QMainWindow):
 
                 # 统计token使用量
                 if "usage" in response_data:
-                    ai_response.tokens_used = response_data["usage"].get("total_tokens", 0)
+                    ai_response.tokens_used = response_data["usage"].get(
+                        "total_tokens", 0
+                    )
 
                 return ai_response
 
             else:
                 ai_response = AIAnalysisResponse()
                 ai_response.success = False
-                ai_response.error_message = f"API请求失败: {response.status_code} - {response.text}"
+                ai_response.error_message = (
+                    f"API请求失败: {response.status_code} - {response.text}"
+                )
                 return ai_response
 
         except requests.exceptions.Timeout:
@@ -3356,11 +4284,12 @@ class MainWindow(QMainWindow):
     def apply_ai_mappings(self, ai_response: Any) -> int:
         """应用AI映射结果"""
         from models.data_models import MappingFormula, FormulaStatus
-        from utils.excel_utils_v2 import validate_formula_syntax_v2
+        from utils.excel_utils import validate_formula_syntax_v2
 
         applied_count = 0
         valid_count = 0
         invalid_count = 0
+        updated_targets: List[str] = []
 
         for mapping in ai_response.mappings:
             target_id = mapping.get("target_id")
@@ -3374,24 +4303,29 @@ class MainWindow(QMainWindow):
                 self.log_manager.warning(f"目标项不存在: {target_id}")
                 continue
 
-            # 验证公式语法
-            is_valid, error_msg = validate_formula_syntax_v2(formula)
+            # 验证公式语法（支持三段式）
+            is_valid, error_msg = validate_formula_syntax_three_segment(
+                formula, self.workbook_manager
+            )
 
             if is_valid:
                 # 创建或更新映射公式
                 mapping_formula = MappingFormula(
                     target_id=target_id,
                     formula=formula,
-                    status=FormulaStatus.AI_GENERATED
+                    status=FormulaStatus.AI_GENERATED,
                 )
 
                 # 设置AI相关信息
                 mapping_formula.ai_confidence = mapping.get("confidence", 0.8)
-                mapping_formula.ai_reasoning = f"AI生成 (模型: {ai_response.model_used})"
+                mapping_formula.ai_reasoning = (
+                    f"AI生成 (模型: {ai_response.model_used})"
+                )
 
                 self.workbook_manager.add_mapping_formula(target_id, mapping_formula)
                 applied_count += 1
                 valid_count += 1
+                updated_targets.append(target_id)
 
                 target_name = self.workbook_manager.target_items[target_id].name
                 self.log_manager.info(f"应用AI映射: {target_name} = {formula}")
@@ -3404,44 +4338,84 @@ class MainWindow(QMainWindow):
         ai_response.valid_mappings = valid_count
         ai_response.invalid_mappings = invalid_count
 
+        if updated_targets:
+            self.handle_formula_updates(updated_targets, reason="ai")
+
         return applied_count
 
     def calculate_preview(self):
         """计算预览"""
         if not self.workbook_manager:
-            QMessageBox.warning(self, "警告", "请先提取数据")
+            QMessageBox.warning(self, "警告", "请先加载并提取数据")
             return
 
         try:
-            self.log_manager.info("开始计算预览...")
+            self.log_manager.info("开始重算所有数值...")
+
+            self.progress_bar.setVisible(True)
+            self.progress_bar.setRange(0, 0)
+            self.progress_bar.setFormat("重算中，请稍候...")
+            QApplication.processEvents()
 
             from modules.calculation_engine import create_calculation_engine
 
             self.calculation_engine = create_calculation_engine(self.workbook_manager)
-            results = self.calculation_engine.calculate_all_formulas(show_progress=False)
+            results = self.calculation_engine.calculate_all_formulas(
+                show_progress=False
+            )
 
             # 更新模型以显示计算结果
             self.target_model.layoutChanged.emit()
 
             summary = self.calculation_engine.get_calculation_summary()
-            self.log_manager.success(f"计算完成: {summary['successful_calculations']}/{summary['total_formulas']} 成功")
+            success_count = summary.get("successful_calculations", 0)
+            total_count = summary.get("total_formulas", 0)
+            error_count = summary.get(
+                "failed_calculations", total_count - success_count
+            )
 
-            self.calculate_btn.setEnabled(True)
+            self.log_manager.success(
+                f"重算完成：成功 {success_count} 项，失败 {error_count} 项，共 {total_count} 项"
+            )
+
+            QMessageBox.information(
+                self,
+                "重算完成",
+                (
+                    f"成功计算 <b>{success_count}</b> 项\n"
+                    f"失败 <b>{error_count}</b> 项"
+                ),
+            )
+
+            self.schedule_main_table_resize(0)
+            self.update_toolbar_states()
 
         except Exception as e:
-            error_msg = f"计算预览时发生异常: {str(e)}"
+            error_msg = f"重算时发生异常: {str(e)}"
             self.log_manager.error(error_msg)
             QMessageBox.critical(self, "错误", error_msg)
+        finally:
+            self.progress_bar.setVisible(False)
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(0)
 
     def export_excel(self):
         """导出Excel"""
-        if not self.calculation_engine:
-            QMessageBox.warning(self, "警告", "请先进行计算")
+        if not self.workbook_manager:
+            QMessageBox.warning(self, "警告", "请先加载并重算数据")
             return
 
+        if not getattr(self.workbook_manager, "calculation_results", {}):
+            QMessageBox.warning(self, "提示", "暂无计算结果，请先点击“重算所有数值”。")
+            return
+
+        if not self.calculation_engine:
+            from modules.calculation_engine import create_calculation_engine
+
+            self.calculation_engine = create_calculation_engine(self.workbook_manager)
+
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "保存Excel文件", "",
-            "Excel Files (*.xlsx);;All Files (*)"
+            self, "保存Excel文件", "", "Excel Files (*.xlsx);;All Files (*)"
         )
 
         if not file_path:
@@ -3454,7 +4428,9 @@ class MainWindow(QMainWindow):
 
             if success:
                 self.log_manager.success(f"导出成功: {file_path}")
-                QMessageBox.information(self, "成功", f"文件已导出到:\n{file_path}")
+                QMessageBox.information(
+                    self, "导出完成", f"数据已导出到：\n<b>{file_path}</b>"
+                )
             else:
                 self.log_manager.error("导出失败")
                 QMessageBox.warning(self, "失败", "导出失败，请查看日志")
@@ -3463,6 +4439,8 @@ class MainWindow(QMainWindow):
             error_msg = f"导出Excel时发生异常: {str(e)}"
             self.log_manager.error(error_msg)
             QMessageBox.critical(self, "错误", error_msg)
+        finally:
+            self.update_toolbar_states()
 
     def export_json(self):
         """导出JSON"""
@@ -3471,8 +4449,7 @@ class MainWindow(QMainWindow):
             return
 
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "保存JSON文件", "",
-            "JSON Files (*.json);;All Files (*)"
+            self, "保存JSON文件", "", "JSON Files (*.json);;All Files (*)"
         )
 
         if not file_path:
@@ -3496,23 +4473,49 @@ class MainWindow(QMainWindow):
     def on_target_selection_changed(self, current: QModelIndex, previous: QModelIndex):
         """目标项选择变化处理"""
         if not current.isValid():
-            self.property_inspector.update_properties(None)
+            if hasattr(self, "property_table"):
+                self.property_table.set_properties({})
+            # 阻止信号，避免触发公式更新循环
+            self.formula_editor.blockSignals(True)
             self.formula_editor.setPlainText("")
+            self.formula_editor.blockSignals(False)
+            self.show_target_source_message("请选择目标项以查看来源详情。")
             return
 
         item = current.internalPointer()
         if not isinstance(item, TargetItem) or not self.workbook_manager:
+            if hasattr(self, "property_table"):
+                self.property_table.set_properties({})
             return
 
-        # 更新属性检查器
-        self.property_inspector.update_properties(item)
+        # 更新属性表格
+        self.update_property_inspector(item)
 
         # 更新公式检查器
-        formula = self.workbook_manager.mapping_formulas.get(item.id)
-        if formula:
-            self.formula_editor.setPlainText(formula.formula)
-        else:
-            self.formula_editor.setPlainText("")
+        selected_formula = ""
+        self._active_formula_column = None
+
+        column_meta_lookup = getattr(self.target_model, "_column_meta_at", None)
+        selected_meta = (
+            column_meta_lookup(current.column())
+            if callable(column_meta_lookup)
+            else None
+        )
+
+        preferred_key = selected_meta["key"] if selected_meta else None
+        column_key, mapping = self._get_mapping_for_item(item, preferred_key)
+        if column_key:
+            self._active_formula_column = column_key
+
+        if mapping and mapping.formula:
+            selected_formula = mapping.formula
+
+        # 阻止信号，避免触发公式更新循环
+        self.formula_editor.blockSignals(True)
+        self.formula_editor.setPlainText(selected_formula)
+        self.formula_editor.blockSignals(False)
+
+        self.update_target_source_panel(item)
 
     def on_drag_started(self, index: QModelIndex):
         """拖拽开始处理"""
@@ -3523,39 +4526,232 @@ class MainWindow(QMainWindow):
         if not target_index.isValid():
             return
 
-        # 如果拖放到公式列，添加引用
-        if target_index.column() == 3:
-            current_text = target_index.data(Qt.DisplayRole) or ""
-            new_text = f"{current_text} + {dropped_text}" if current_text else dropped_text
+        column_meta = getattr(target_index.model(), "_column_meta_at", None)
+        if not callable(column_meta) or not column_meta(target_index.column()):
+            return
 
-            # 更新模型数据
-            target_index.model().setData(target_index, new_text, Qt.EditRole)
+        current_text = target_index.data(Qt.DisplayRole) or ""
+        new_text = f"{current_text} + {dropped_text}" if current_text else dropped_text
 
-            self.log_manager.info(f"已添加引用: {dropped_text}")
+        # 更新模型数据
+        target_index.model().setData(target_index, new_text, Qt.EditRole)
+
+        self.log_manager.info(f"已添加引用: {dropped_text}")
+
+    def handle_formula_updates(self, target_ids: List[str], reason: str = "manual"):
+        """统一处理公式更新后的逻辑"""
+        if not self.workbook_manager or not target_ids:
+            return
+
+        unique_ids: List[str] = []
+        for target_id in target_ids:
+            if (
+                target_id
+                and target_id in self.workbook_manager.target_items
+                and target_id not in unique_ids
+            ):
+                unique_ids.append(target_id)
+
+        if not unique_ids:
+            return
+
+        self.recalculate_targets(unique_ids, reason=reason)
+        self.schedule_autosave()
+
+    def recalculate_targets(self, target_ids: List[str], reason: str = "manual"):
+        """增量计算指定目标项的预览值"""
+        if not self.workbook_manager:
+            return
+
+        from modules.calculation_engine import create_calculation_engine
+
+        if not self.calculation_engine:
+            self.calculation_engine = create_calculation_engine(self.workbook_manager)
+        else:
+            # 重置上下文确保使用最新数据
+            self.calculation_engine.workbook_manager = self.workbook_manager
+            self.calculation_engine.calculation_context.value_cache.clear()
+            self.calculation_engine.calculation_context.calculation_order.clear()
+            self.calculation_engine.calculation_context.errors.clear()
+            self.calculation_engine.calculation_context.warnings.clear()
+
+        engine = self.calculation_engine
+
+        successful: List[Tuple[str, str, str]] = (
+            []
+        )  # (target_id, column_key, column_name)
+        cleared: List[Tuple[str, str, str]] = []  # (target_id, column_key, column_name)
+        errors: List[Tuple[str, str, str, str]] = (
+            []
+        )  # (target_id, column_key, column_name, message)
+
+        for target_id in target_ids:
+            column_map = self.workbook_manager.mapping_formulas.get(target_id, {})
+            if isinstance(column_map, MappingFormula):
+                column_map = {column_map.column_key or "__default__": column_map}
+
+            if not column_map:
+                self.workbook_manager.calculation_results.pop(target_id, None)
+                continue
+
+            for column_key, formula_obj in column_map.items():
+                if not formula_obj.formula or not formula_obj.formula.strip():
+                    formula_obj.update_formula(
+                        "",
+                        status=FormulaStatus.EMPTY,
+                        column_name=formula_obj.column_name,
+                    )
+                    formula_obj.calculation_result = None
+                    formula_obj.last_calculated = None
+                    formula_obj.validation_error = ""
+
+                    result_map = self.workbook_manager.calculation_results.get(
+                        target_id
+                    )
+                    if result_map and column_key in result_map:
+                        del result_map[column_key]
+                        if not result_map:
+                            self.workbook_manager.calculation_results.pop(
+                                target_id, None
+                            )
+                    cleared.append(
+                        (target_id, column_key, formula_obj.column_name or column_key)
+                    )
+                    continue
+
+                is_valid, error_msg = validate_formula_syntax_three_segment(
+                    formula_obj.formula, self.workbook_manager
+                )
+                if not is_valid:
+                    formula_obj.set_validation_result(False, error_msg)
+                    result_map = self.workbook_manager.calculation_results.get(
+                        target_id
+                    )
+                    if result_map and column_key in result_map:
+                        del result_map[column_key]
+                        if not result_map:
+                            self.workbook_manager.calculation_results.pop(
+                                target_id, None
+                            )
+                    errors.append(
+                        (
+                            target_id,
+                            column_key,
+                            formula_obj.column_name or column_key,
+                            error_msg,
+                        )
+                    )
+                    continue
+
+                formula_obj.set_validation_result(True, "")
+
+                result = engine.calculate_single_formula(target_id, formula_obj)
+                result_map = self.workbook_manager.calculation_results.setdefault(
+                    target_id, {}
+                )
+                result_map[column_key] = result
+
+                if result.success:
+                    successful.append(
+                        (target_id, column_key, formula_obj.column_name or column_key)
+                    )
+                else:
+                    formula_obj.status = FormulaStatus.ERROR
+                    formula_obj.validation_error = result.error_message or "计算失败"
+                    errors.append(
+                        (
+                            target_id,
+                            column_key,
+                            formula_obj.column_name or column_key,
+                            formula_obj.validation_error,
+                        )
+                    )
+
+        # 更新界面显示
+        if self.target_model:
+            for target_id in target_ids:
+                index = self.target_model.get_index_for_target(target_id, 0)
+                if index.isValid():
+                    left = index.sibling(index.row(), 0)
+                    right = index.sibling(
+                        index.row(), self.target_model.columnCount() - 1
+                    )
+                    self.target_model.dataChanged.emit(left, right, [Qt.DisplayRole])
+
+        # 若当前选中项被更新，刷新属性检查器
+        current_index = self.main_data_grid.currentIndex()
+        if current_index.isValid():
+            current_item = self.target_model.get_target_item(current_index)
+            if current_item and current_item.id in target_ids:
+                self.update_property_inspector(current_item)
+                self.update_target_source_panel(current_item)
+
+        # 日志反馈
+        if successful:
+            if len(successful) == 1:
+                target_id, _column_key, column_name = successful[0]
+                name = self.workbook_manager.target_items[target_id].name
+                self.log_manager.success(f"🧮 预览已更新: {name} · {column_name}")
+            else:
+                self.log_manager.success(f"🧮 已更新 {len(successful)} 个列的预览值")
+
+        if cleared:
+            if len(cleared) == 1:
+                target_id, _column_key, column_name = cleared[0]
+                name = self.workbook_manager.target_items[target_id].name
+                self.log_manager.info(f"⭕ 已清空公式预览: {name} · {column_name}")
+            else:
+                self.log_manager.info(f"⭕ 已清空 {len(cleared)} 个列的公式预览")
+
+        for target_id, _column_key, column_name, message in errors:
+            name = self.workbook_manager.target_items[target_id].name
+            self.log_manager.warning(f"❌ {name} · {column_name} 计算失败: {message}")
+
+        self.schedule_main_table_resize(0)
+        self.update_toolbar_states()
 
     def on_formula_changed(self, formula: str):
         """公式变化处理"""
-        # 实时验证公式
+        # 实时验证公式（支持三段式）
         if formula.strip():
-            is_valid, error = validate_formula_syntax_v2(formula)
+            is_valid, error = validate_formula_syntax_three_segment(
+                formula, self.workbook_manager
+            )
             if not is_valid:
                 self.log_manager.warning(f"公式语法错误: {error}")
 
         # 更新当前选中项的公式
         current_index = self.main_data_grid.currentIndex()
-        if current_index.isValid() and current_index.column() != 3:
-            # 切换到公式列
-            formula_index = current_index.sibling(current_index.row(), 3)
-            if formula_index.isValid():
-                formula_index.model().setData(formula_index, formula, Qt.EditRole)
+        if not current_index.isValid():
+            return
+
+        model = current_index.model()
+        meta_lookup = getattr(model, "_column_meta_at", None)
+        column_meta = (
+            meta_lookup(current_index.column()) if callable(meta_lookup) else None
+        )
+
+        if not column_meta:
+            if not callable(meta_lookup) or not self.target_model.dynamic_columns:
+                return
+            formula_column = len(self.target_model.static_headers)
+            target_index = current_index.sibling(current_index.row(), formula_column)
+        else:
+            target_index = current_index
+
+        if target_index.isValid():
+            target_index.model().setData(target_index, formula, Qt.EditRole)
 
     def on_sheet_selected(self, sheet_name: str, sheet_type):
         """工作表选择处理"""
-        self.log_manager.info(f"选择工作表: {sheet_name} (类型: {'快报表' if sheet_type.value == 'flash_report' else '数据来源表'})")
+        self.log_manager.info(
+            f"选择工作表: {sheet_name} (类型: {'快报表' if sheet_type.value == 'flash_report' else '数据来源表'})"
+        )
 
         # 如果选择的是快报表，更新目标项模型
-        if sheet_type.value == 'flash_report' and self.target_model and sheet_name:
+        if sheet_type.value == "flash_report" and self.target_model and sheet_name:
             self.target_model.set_active_sheet(sheet_name)
+            self._apply_main_header_layout()
 
     def on_flash_report_activated(self, sheet_name: str):
         """快报表激活处理"""
@@ -3563,14 +4759,176 @@ class MainWindow(QMainWindow):
         # 更新目标项模型以显示该工作表的项目
         if self.target_model and sheet_name:
             self.target_model.set_active_sheet(sheet_name)
+            self._apply_main_header_layout()
 
-    def update_sheet_explorer(self):
-        """更新工作表浏览器"""
-        if not self.workbook_manager:
+    def toggle_fullscreen(self):
+        """切换全屏显示模式"""
+        if self._is_fullscreen:
+            # 退出全屏，恢复正常显示
+            self._is_fullscreen = False
+            self.fullscreen_btn.setText("🖥️ 全屏显示")
+            self.fullscreen_btn.setChecked(False)
+
+            # 恢复窗口状态
+            if self._saved_window_state:
+                self.restoreGeometry(self._saved_window_state)
+
+            # 显示右侧工具区（main_splitter的第二个widget）
+            if self.main_splitter.count() >= 2:
+                self.main_splitter.widget(1).setVisible(True)
+
+            # 显示底部日志区
+            if hasattr(self, "log_container"):
+                self.log_container.setVisible(True)
+
+            # 恢复splitter比例
+            if self._saved_splitter_sizes:
+                self.main_splitter.setSizes(self._saved_splitter_sizes)
+
+            self.log_manager.info("退出全屏模式")
+        else:
+            # 进入全屏显示
+            self._is_fullscreen = True
+            self.fullscreen_btn.setText("❌ 取消全屏显示")
+            self.fullscreen_btn.setChecked(True)
+
+            # 保存当前窗口状态
+            self._saved_window_state = self.saveGeometry()
+
+            # 保存splitter比例
+            self._saved_splitter_sizes = self.main_splitter.sizes()
+
+            # 窗口最大化
+            self.showMaximized()
+
+            # 隐藏右侧工具区
+            if self.main_splitter.count() >= 2:
+                self.main_splitter.widget(1).setVisible(False)
+
+            # 隐藏底部日志区
+            if hasattr(self, "log_container"):
+                self.log_container.setVisible(False)
+
+            self.log_manager.info("进入全屏模式：只显示主表格和来源详情")
+
+    def on_target_sheet_changed(self, sheet_name: str):
+        """处理主数据表工作表选择变化"""
+        if not sheet_name or not self.target_model:
             return
 
-        # 模型已经在extract_data中更新了
-        self.log_manager.success(f"工作表浏览器已更新: 快报表{len(self.workbook_manager.flash_report_sheets)}个, 数据表{len(self.workbook_manager.data_source_sheets)}个")
+        # 重置当前sheet的重试计数，防止失败状态传播
+        if hasattr(self, "_main_resize_retry_counts"):
+            self._main_resize_retry_counts.pop(sheet_name, None)
+            self.log_manager.info(f"重置工作表'{sheet_name}'的列宽调整重试计数")
+
+        self.log_manager.info(f"主数据表切换工作表: {sheet_name}")
+        try:
+            # 切换当前显示的工作表
+            self.target_model.set_active_sheet(sheet_name)
+
+            # 关键修复3：使用QTimer.singleShot确保在事件循环完成后执行header操作
+            # 这确保view完全更新后才应用header布局
+            QTimer.singleShot(0, lambda: self._apply_main_header_layout())
+
+            # 清空搜索框
+            if hasattr(self, "target_search_line"):
+                self.target_search_line.clear()
+
+            # 关键修复4：增加延迟以确保view完全刷新
+            # 原来是100ms，现在改为300ms，给view更多时间完成异步更新
+            self.schedule_main_table_resize(300)
+        except Exception as e:
+            self.log_manager.error(f"切换到工作表'{sheet_name}'时出错: {e}")
+            import traceback
+
+            self.log_manager.info(traceback.format_exc())
+
+    def filter_target_items(self, filter_text: str):
+        """过滤主数据表中的待写入项（增强版：隐藏+高亮）"""
+        if not self.main_data_grid.model():
+            return
+
+        model = self.main_data_grid.model()
+        filter_lower = filter_text.lower()
+
+        # 设置搜索文本到model（触发高亮）
+        if hasattr(model, "set_search_text"):
+            model.set_search_text(filter_lower)
+
+        # 遍历所有行，根据筛选文本显示/隐藏
+        for row in range(model.rowCount()):
+            row_matched = False
+            # 检查所有列是否包含搜索文本
+            for col in range(model.columnCount()):
+                index = model.index(row, col)
+                cell_text = str(model.data(index, Qt.DisplayRole) or "")
+                if filter_lower in cell_text.lower():
+                    row_matched = True
+                    break
+
+            # 🔧 修复：QTreeView的setRowHidden需要三个参数(row, parent_index, hide)
+            # 使用QModelIndex()作为parent表示顶层项目
+            should_hide = (not row_matched) if filter_text else False
+            self.main_data_grid.setRowHidden(row, QModelIndex(), should_hide)
+
+    def clear_current_sheet_formulas(self):
+        """清除当前工作表的所有公式"""
+        if not self.workbook_manager:
+            QMessageBox.warning(self, "提示", "请先加载文件")
+            return
+
+        # 获取当前激活的工作表名
+        if (
+            not hasattr(self.target_model, "active_sheet_name")
+            or not self.target_model.active_sheet_name
+        ):
+            QMessageBox.warning(self, "提示", "请先选择一个快报表")
+            return
+
+        current_sheet = self.target_model.active_sheet_name
+
+        # 查找当前工作表的所有目标项ID
+        sheet_target_ids = [
+            target_id
+            for target_id, target_item in self.workbook_manager.target_items.items()
+            if target_item.sheet_name == current_sheet
+        ]
+
+        # 统计当前工作表的公式数量
+        formula_count = sum(
+            len(self.workbook_manager.mapping_formulas.get(target_id, {}))
+            for target_id in sheet_target_ids
+        )
+
+        if formula_count == 0:
+            QMessageBox.information(self, "提示", f"工作表 '{current_sheet}' 没有公式")
+            return
+
+        # 确认对话框
+        reply = QMessageBox.question(
+            self,
+            "确认操作",
+            f"🗑️ 将清除工作表 '{current_sheet}' 的 {formula_count} 个公式，是否继续？\n\n"
+            f"注意：此操作不会修改Excel文件，只清除程序中的映射关系。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+
+        if reply == QMessageBox.Yes:
+            # 清除当前工作表的所有公式
+            cleared_ids = []
+            for target_id in sheet_target_ids:
+                if target_id in self.workbook_manager.mapping_formulas:
+                    self.workbook_manager.remove_mapping(target_id, None)
+                    cleared_ids.append(target_id)
+
+            # 更新界面
+            if cleared_ids:
+                self.handle_formula_updates(cleared_ids, reason="clear_sheet")
+
+            self.log_manager.info(
+                f"🗑️ 已清除工作表 '{current_sheet}' 的 {formula_count} 个公式"
+            )
 
     def clear_all_formulas(self):
         """清除所有公式"""
@@ -3578,14 +4936,27 @@ class MainWindow(QMainWindow):
             return
 
         reply = QMessageBox.question(
-            self, "确认", "确定要清除所有公式吗？",
+            self,
+            "确认操作",
+            "🗑️ 将清除所有工作表的所有公式，是否继续？\n\n"
+            "注意：此操作不会修改Excel文件，只清除程序中的映射关系。",
             QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
+            QMessageBox.No,
         )
 
         if reply == QMessageBox.Yes:
+            cleared_ids = (
+                list(self.workbook_manager.mapping_formulas.keys())
+                if self.workbook_manager
+                else []
+            )
             self.workbook_manager.mapping_formulas.clear()
-            self.target_model.layoutChanged.emit()
+            if self.workbook_manager:
+                self.workbook_manager.calculation_results.clear()
+            if cleared_ids:
+                self.handle_formula_updates(cleared_ids, reason="clear_all")
+            else:
+                self.target_model.layoutChanged.emit()
             self.log_manager.info("已清除所有公式")
 
     def recalculate(self):
@@ -3596,158 +4967,459 @@ class MainWindow(QMainWindow):
         """重置布局"""
         self.log_manager.info("布局重置功能开发中...")
 
-    def filter_by_category(self, category_text: str):
-        """按分类筛选目标项"""
-        if not self.target_model:
+    def update_property_inspector(self, target_item: Optional[TargetItem]):
+        """更新属性表格"""
+        if not hasattr(self, "property_table"):
             return
 
-        # 更新分类筛选
-        if category_text == "全部分类":
-            # 显示所有分类
-            for i in range(self.target_model.rowCount()):
-                index = self.target_model.index(i, 0)
-                self.item_structure_tree.setRowHidden(i, QModelIndex(), False)
-        else:
-            # 只显示匹配的分类
-            for i in range(self.target_model.rowCount()):
-                index = self.target_model.index(i, 0)
-                item = index.internalPointer()
-                if isinstance(item, CategoryNode):
-                    hidden = category_text not in item.name
-                    self.item_structure_tree.setRowHidden(i, QModelIndex(), hidden)
-
-        self.log_manager.info(f"🔍 筛选分类: {category_text}")
-
-    def search_target_items(self, search_text: str):
-        """搜索目标项"""
-        if not self.target_model or not search_text.strip():
-            # 清空搜索时恢复所有项目
-            self.clear_search_filter()
+        if not target_item:
+            self.property_table.set_properties({})
             return
 
-        search_text = search_text.lower()
-        found_items = []
+        properties = {
+            "目标项ID": target_item.id,
+            "项目名称": target_item.name,
+            "所属表格": target_item.sheet_name,
+            "单元格地址": target_item.cell_address,
+            "数据类型": (
+                "数值"
+                if getattr(target_item, "data_type", "text") == "number"
+                else "文本"
+            ),
+            "是否必填": "是" if getattr(target_item, "required", False) else "否",
+        }
 
-        # 搜索所有目标项
-        for category_node in self.target_model.root_items:
-            category_match = False
-            for target_item in category_node.children:
-                if search_text in target_item.name.lower():
-                    found_items.append((category_node.name, target_item.name))
-                    category_match = True
+        if self.workbook_manager:
+            column_map = self.workbook_manager.mapping_formulas.get(target_item.id, {})
+            result_map = self.workbook_manager.calculation_results.get(
+                target_item.id, {}
+            )
 
-            # 如果分类下有匹配项，展开该分类
-            if category_match:
-                category_index = self.target_model.createIndex(
-                    self.target_model.root_items.index(category_node), 0, category_node
-                )
-                self.item_structure_tree.expand(category_index)
+            if column_map:
+                column_descriptions: List[str] = []
+                for column_key, mapping in column_map.items():
+                    column_name = mapping.column_name or column_key
+                    if mapping.formula:
+                        descriptor = mapping.formula
+                    elif mapping.constant_value not in (None, ""):
+                        descriptor = f"常量: {mapping.constant_value}"
+                    else:
+                        descriptor = "未设置"
 
-        if found_items:
-            self.log_manager.info(f"🔍 找到 {len(found_items)} 个匹配项: {search_text}")
-            # 可以高亮显示搜索结果
-            self.highlight_search_results(found_items)
-        else:
-            self.log_manager.info(f"🔍 未找到匹配项: {search_text}")
-
-    def clear_search_filter(self):
-        """清除搜索筛选"""
-        if self.target_model:
-            # 恢复所有项目的可见性
-            for i in range(self.target_model.rowCount()):
-                self.item_structure_tree.setRowHidden(i, QModelIndex(), False)
-
-    def highlight_search_results(self, found_items: list):
-        """高亮搜索结果（简化实现）"""
-        # 这里可以实现更复杂的高亮逻辑
-        pass
-
-    def expand_all_categories(self):
-        """展开所有分类"""
-        if self.target_model:
-            self.item_structure_tree.expandAll()
-            self.log_manager.info("🔽 已展开所有分类")
-
-    def collapse_all_categories(self):
-        """折叠所有分类"""
-        if self.target_model:
-            self.item_structure_tree.collapseAll()
-            self.log_manager.info("🔼 已折叠所有分类")
-
-    def on_target_item_clicked(self, index: QModelIndex):
-        """目标项单击处理"""
-        if not index.isValid():
-            return
-
-        item = index.internalPointer()
-        if isinstance(item, TargetItem):
-            # 选中目标项，更新属性面板
-            self.selected_target_id = item.id
-            self.update_property_inspector(item)
-            self.log_manager.info(f"🎯 选中目标项: {item.name}")
-
-        elif isinstance(item, CategoryNode):
-            # 切换分类展开/折叠状态
-            if self.item_structure_tree.isExpanded(index):
-                self.item_structure_tree.collapse(index)
-            else:
-                self.item_structure_tree.expand(index)
-
-    def on_target_item_double_clicked(self, index: QModelIndex):
-        """目标项双击处理"""
-        if not index.isValid():
-            return
-
-        item = index.internalPointer()
-        if isinstance(item, TargetItem):
-            # 双击时快速定位到主数据网格中对应行
-            self.navigate_to_main_grid(item.id)
-            self.log_manager.info(f"🎯 导航到主表格: {item.name}")
-
-    def navigate_to_main_grid(self, target_id: str):
-        """导航到主数据网格中的指定项"""
-        if not self.target_model:
-            return
-
-        # 在主表格中查找并选中对应行
-        for row in range(self.target_model.rowCount()):
-            index = self.target_model.index(row, 0)
-            item = self.target_model.get_target_item(index)
-            if item and item.id == target_id:
-                # 选中该行
-                self.main_data_grid.setCurrentIndex(index)
-                self.main_data_grid.scrollTo(index, QAbstractItemView.PositionAtCenter)
-                break
-
-    def update_property_inspector(self, target_item: TargetItem):
-        """更新属性检查器"""
-        if hasattr(self, 'property_inspector'):
-            # 更新属性面板显示目标项的详细信息
-            properties = {
-                "目标项ID": target_item.id,
-                "项目名称": target_item.name,
-                "所属表格": target_item.sheet_name,
-                "单元格地址": target_item.cell_address,
-                "数据类型": "数值" if getattr(target_item, 'data_type', 'text') == "number" else "文本",
-                "是否必填": "是" if getattr(target_item, 'required', False) else "否"
-            }
-
-            # 添加映射信息
-            if self.workbook_manager:
-                formula = self.workbook_manager.mapping_formulas.get(target_item.id)
-                if formula:
-                    properties["映射公式"] = formula.formula
-                    properties["公式状态"] = formula.status.value
-                    result = self.workbook_manager.calculation_results.get(target_item.id)
+                    column_status = mapping.status.value
+                    preview = ""
+                    result = result_map.get(column_key)
                     if result:
-                        properties["计算结果"] = str(result.value) if result.success else "计算失败"
+                        if result.success and result.result is not None:
+                            preview = f"结果: {result.result}"
+                        elif result.success:
+                            preview = "结果: 成功"
+                        elif result.error_message:
+                            preview = f"错误: {result.error_message}"
+                        else:
+                            preview = "错误: 计算失败"
 
-            self.property_inspector.update_properties(properties)
+                    parts = [descriptor, f"状态: {column_status}"]
+                    if preview:
+                        parts.append(preview)
+
+                    column_descriptions.append(f"{column_name} → " + " | ".join(parts))
+
+                properties["列映射"] = "\n".join(column_descriptions)
+            else:
+                properties["列映射"] = "未配置任何列映射"
+
+        self.property_table.set_properties(properties)
+
+    def show_target_source_message(self, message: str):
+        """在来源详情面板中展示提示信息"""
+        if not hasattr(self, "target_source_stack"):
+            return
+
+        self.target_source_message.setText(message)
+        if hasattr(self, "_target_source_message_index"):
+            self.target_source_stack.setCurrentIndex(self._target_source_message_index)
+
+        if hasattr(self, "target_source_description"):
+            self.target_source_description.setText(
+                self._target_source_description_default
+            )
+
+    def refresh_target_source_summary(self):
+        """根据当前选中项刷新来源详情"""
+        if not hasattr(self, "target_source_stack"):
+            return
+
+        if not self.workbook_manager or not self.main_data_grid:
+            self.show_target_source_message("请选择目标项以查看来源详情。")
+            return
+
+        current_index = self.main_data_grid.currentIndex()
+        if not current_index.isValid():
+            self.show_target_source_message("请选择目标项以查看来源详情。")
+            return
+
+        target_item = self.target_model.get_target_item(current_index)
+        self.update_target_source_panel(target_item)
+
+    def update_target_source_panel(self, target_item: Optional[TargetItem]):
+        """更新左侧来源详情面板内容"""
+        if not hasattr(self, "target_source_stack"):
+            return
+
+        if not target_item or not self.workbook_manager:
+            self.show_target_source_message("请选择目标项以查看来源详情。")
+            return
+
+        column_map = self.workbook_manager.mapping_formulas.get(target_item.id, {})
+        if isinstance(column_map, MappingFormula):
+            column_map = {column_map.column_key or "__default__": column_map}
+        if not column_map:
+            self.show_target_source_message("当前选中项没有填写来源项。")
+            return
+
+        current_index = self.main_data_grid.currentIndex()
+        target_column_key = None
+        column_name = ""
+        if current_index.isValid():
+            column_meta = getattr(self.target_model, "_column_meta_at", None)
+            if callable(column_meta):
+                meta = column_meta(current_index.column())
+                if meta and meta["key"] in column_map:
+                    target_column_key = meta["key"]
+                    column_name = meta["name"]
+
+        mapping = None
+        if target_column_key:
+            mapping = column_map.get(target_column_key)
+
+        if not mapping or not mapping.formula:
+            # 回退到第一个有公式的列
+            for key, candidate in column_map.items():
+                if candidate.formula:
+                    mapping = candidate
+                    target_column_key = key
+                    column_name = candidate.column_name or key
+                    break
+
+        if not mapping or not mapping.formula:
+            self.show_target_source_message("当前选中列没有填写来源项。")
+            return
+
+        # ⭐ 使用三段式解析（新版）
+        references = parse_formula_references_three_segment(mapping.formula)
+
+        if not references:
+            self.show_target_source_message("当前映射公式未包含来源引用。")
+            return
+
+        seen_keys = set()
+        sources_info: List[Dict[str, Any]] = []
+
+        for ref in references:
+            # ⭐ 三段式：使用full_reference或构建唯一key
+            ref_key = (
+                ref.get("full_reference")
+                or f"{ref.get('sheet_name')}::{ref.get('item_name')}::{ref.get('column_name')}"
+            )
+            if ref_key in seen_keys:
+                continue
+            seen_keys.add(ref_key)
+            sources_info.append(self._build_source_reference_info(ref))
+
+        if not sources_info:
+            self.show_target_source_message(
+                "未能在来源项库中找到对应的来源，请检查映射设置。"
+            )
+            return
+
+        self._active_formula_column = target_column_key
+        self._render_target_source_table(target_item, sources_info)
+
+    def _build_source_reference_info(self, reference: Dict[str, Any]) -> Dict[str, Any]:
+        """构建来源引用信息（支持三段式）"""
+        sheet_name = reference.get("sheet_name", "")
+        item_name = reference.get("item_name") or ""
+
+        # ⭐ 三段式：使用column_name而不是column_key
+        column_name = reference.get("column_name")  # 三段式的列名
+        column_key = reference.get("column_key")  # 旧格式的column_key（可能为None）
+        cell_address = reference.get("cell_address", "")
+
+        candidates = self._find_source_candidates(sheet_name, item_name, cell_address)
+        source_item = candidates[0] if candidates else None
+
+        # 优先使用column_name（三段式），回退到column_key（旧格式）
+        column_label = column_name or column_key or "主要数值"
+        column_description = ""
+        raw_value: Any = None
+
+        if source_item:
+            # ⭐ 三段式：从values字典获取值（column_name作为key）
+            if (
+                column_name
+                and hasattr(source_item, "values")
+                and isinstance(source_item.values, dict)
+            ):
+                # 对列名进行strip比对查找
+                column_name_stripped = (
+                    column_name.strip() if isinstance(column_name, str) else column_name
+                )
+                for col_key, col_value in source_item.values.items():
+                    col_key_stripped = (
+                        col_key.strip() if isinstance(col_key, str) else col_key
+                    )
+                    if col_key_stripped == column_name_stripped:
+                        raw_value = col_value
+                        column_label = col_key  # 使用原始key（保留空格）
+                        break
+            # 回退：旧格式column_key
+            elif column_key:
+                if hasattr(source_item, "data_columns"):
+                    raw_value = source_item.data_columns.get(column_key)
+                if hasattr(source_item, "column_info"):
+                    column_description = source_item.column_info.get(column_key, "")
+            # 回退：使用主值
+            else:
+                raw_value = getattr(source_item, "value", None)
+
+        formatted_value = self._format_source_value(raw_value)
+        column_display = column_label
+        if column_description:
+            column_display = f"{column_label} ({column_description})"
+
+        header_text = self._format_source_header(
+            source_item, sheet_name, item_name, column_key or column_name
+        )
+
+        return {
+            "header": header_text,
+            "sheet": source_item.sheet_name if source_item else sheet_name or "-",
+            "level": str(source_item.hierarchy_level) if source_item else "-",
+            "item": source_item.name if source_item else item_name or "-",
+            "account_code": source_item.account_code if source_item else "-",
+            "column": column_display,
+            "cell": source_item.cell_address if source_item else cell_address or "-",
+            "value": formatted_value,
+            "is_numeric": isinstance(raw_value, (int, float)),
+            "missing": source_item is None,
+        }
+
+    def _render_target_source_table(
+        self, target_item: TargetItem, sources_info: List[Dict[str, Any]]
+    ):
+        if not hasattr(self, "target_source_table"):
+            return
+
+        # 🔧 直接使用source_info中的键来构建attributes，确保与数据结构匹配
+        attributes = [
+            ("工作表", "sheet", lambda info: info.get("sheet", "-")),
+            ("项目名称", "item", lambda info: info.get("item", "-")),
+            ("科目代码", "account_code", lambda info: info.get("account_code", "-")),
+            ("数据列", "column", lambda info: info.get("column", "-")),
+            ("单元格", "cell", lambda info: info.get("cell", "-")),
+            ("数值", "value", lambda info: info.get("value", "-")),
+        ]
+
+        self.target_source_table.clear()
+        # 🔧 转置显示：行为不同的来源，列为各种属性
+        self.target_source_table.setRowCount(len(sources_info))
+        self.target_source_table.setColumnCount(len(attributes))
+
+        # 列头显示为属性名
+        self.target_source_table.setHorizontalHeaderLabels(
+            [label for label, _, _ in attributes]
+        )
+        # 行头显示为来源编号（第1项、第2项...）
+        self.target_source_table.setVerticalHeaderLabels(
+            [f"第{i+1}项" for i in range(len(sources_info))]
+        )
+
+        # 填充数据：遍历每个来源（行），然后填充各个属性（列）
+        for row, info in enumerate(sources_info):
+            for col, (_, key, value_getter) in enumerate(attributes):
+                display_value = value_getter(info)
+                item = QTableWidgetItem(display_value)
+
+                # 检查是否为数值类型
+                is_numeric = isinstance(display_value, (int, float)) or (
+                    isinstance(display_value, str)
+                    and display_value.replace(".", "", 1)
+                    .replace(",", "")
+                    .replace("-", "", 1)
+                    .isdigit()
+                )
+
+                if is_numeric:
+                    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                else:
+                    item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
+                if info.get("missing"):
+                    item.setForeground(QBrush(QColor("#c0392b")))
+
+                item.setToolTip(display_value)
+                self.target_source_table.setItem(row, col, item)
+
+        header = self.target_source_table.horizontalHeader()
+        ensure_interactive_header(header, stretch_last=False)
+        # 设置所有列为Interactive模式，允许自动调整
+        for column in range(self.target_source_table.columnCount()):
+            header.setSectionResizeMode(column, QHeaderView.Interactive)
+        # 触发自动列宽调整
+        QTimer.singleShot(100, self.target_source_table._auto_adjust_columns)
+        # ⭐ 不自动调整行高，保持用户设置的30px默认行高
+        # schedule_row_resize(self.target_source_table, 60)  # 注释掉，避免覆盖用户设置
+
+        # ⭐ 强制设置所有行为40px高度，确保数据更新后行高保持固定
+        v_header = self.target_source_table.verticalHeader()
+        for row in range(self.target_source_table.rowCount()):
+            v_header.resizeSection(row, 40)
+
+        if hasattr(self, "_target_source_table_index"):
+            self.target_source_stack.setCurrentIndex(self._target_source_table_index)
+
+        if hasattr(self, "target_source_description"):
+            missing_count = sum(1 for info in sources_info if info.get("missing"))
+            summary = f"来源数量：{len(sources_info)} 个"
+            if missing_count:
+                summary += f"（其中 {missing_count} 个未在来源项库中找到）"
+            self.target_source_description.setText(summary)
+
+    def _extract_source_value_for_key(
+        self, source_info: Dict[str, Any], column_key: str
+    ) -> str:
+        """从source_info中提取特定列的值"""
+        # 先尝试从source_info直接获取（可能已经预处理过）
+        if column_key in source_info:
+            value = source_info[column_key]
+            return self._format_source_value(value)
+
+        # 尝试获取source_item对象
+        source_item = source_info.get("source_item")
+        if not source_item:
+            # 如果没有source_item，说明是missing的来源
+            return "-"
+
+        # 从source_item的data_columns获取
+        if hasattr(source_item, "data_columns"):
+            value = source_item.data_columns.get(column_key)
+            if value is not None:
+                return self._format_source_value(value)
+
+        # 尝试从常见属性获取
+        attr_mapping = {
+            "name": ["name", "名称", "项目名称", "项目"],
+            "hierarchy_level": ["hierarchy_level", "level", "层级", "级别"],
+            "account_code": ["account_code", "code", "科目代码", "代码"],
+            "sheet_name": ["sheet_name", "sheet", "工作表"],
+            "value": ["value", "main_value", "数值", "值"],
+        }
+
+        for attr, possible_keys in attr_mapping.items():
+            if column_key in possible_keys:
+                value = getattr(source_item, attr, None)
+                if value is not None:
+                    return self._format_source_value(value)
+
+        return "-"
+
+    def _format_source_value(self, value: Any) -> str:
+        if value is None or value == "":
+            return "-"
+
+        if isinstance(value, (int, float)):
+            if value == 0:
+                return "0"
+            if abs(value) >= 10000:
+                return f"{value:,.0f}"
+            return f"{value:,.2f}"
+
+        return str(value)
+
+    def _format_source_header(
+        self,
+        source_item: Optional[SourceItem],
+        sheet_name: str,
+        item_name: str,
+        column_key: Optional[str],
+    ) -> str:
+        if source_item:
+            base_name = f"{source_item.sheet_name} · {source_item.name}"
+        else:
+            display_item = item_name or "?"
+            base_name = f"{sheet_name or '-'} · {display_item}"
+
+        if column_key:
+            base_name = f"{base_name} | {column_key}"
+
+        return base_name
+
+    def _shorten_text(self, text: str, max_length: int = 36) -> str:
+        if not text:
+            return "-"
+        text = str(text)
+        if len(text) <= max_length:
+            return text
+        return f"{text[:max_length - 1]}…"
+
+    def _rebuild_source_lookup_index(self):
+        self._source_lookup_index = {}
+        if not self.workbook_manager:
+            return
+
+        for source_item in self.workbook_manager.source_items.values():
+            key = (
+                getattr(source_item, "sheet_name", ""),
+                getattr(source_item, "name", ""),
+            )
+            if key not in self._source_lookup_index:
+                self._source_lookup_index[key] = []
+            self._source_lookup_index[key].append(source_item)
+
+    def _find_source_candidates(
+        self, sheet_name: str, item_name: str, cell_address: Optional[str] = None
+    ) -> List[SourceItem]:
+        if not self._source_lookup_index:
+            self._rebuild_source_lookup_index()
+
+        key = (sheet_name, item_name)
+        if key in self._source_lookup_index:
+            return self._source_lookup_index[key]
+
+        alt_key = (
+            sheet_name.strip() if sheet_name else sheet_name,
+            item_name.strip() if item_name else item_name,
+        )
+        matches = self._source_lookup_index.get(alt_key, [])
+
+        if matches or not cell_address:
+            return matches
+
+        normalized_cell = cell_address.strip().upper()
+        fallback: List[SourceItem] = []
+        if self.workbook_manager:
+            for source in self.workbook_manager.source_items.values():
+                if (
+                    getattr(source, "sheet_name", "") == sheet_name
+                    and getattr(source, "cell_address", "").upper() == normalized_cell
+                ):
+                    fallback.append(source)
+
+        return fallback
 
     def show_context_menu(self, position):
         """显示右键上下文菜单"""
-        if not self.main_data_grid.indexAt(position).isValid():
+        index = self.main_data_grid.indexAt(position)
+        if not index.isValid():
             return
+
+        column_meta_lookup = getattr(self.target_model, "_column_meta_at", None)
+        self._active_formula_column = None
+        if callable(column_meta_lookup):
+            meta = column_meta_lookup(index.column())
+            if meta:
+                self._active_formula_column = meta.get("key")
 
         # 获取选中的行
         selected_indexes = self.main_data_grid.selectionModel().selectedRows()
@@ -3764,12 +5436,26 @@ class MainWindow(QMainWindow):
             menu.addAction("🔍 查看详情", self.view_details)
 
             # 如果有公式，添加公式相关操作
-            if selected_item.id in self.workbook_manager.mapping_formulas:
-                formula = self.workbook_manager.mapping_formulas[selected_item.id]
-                if formula.formula:
-                    menu.addAction("📋 复制公式", self.copy_formula)
-                    menu.addAction("🗑️ 删除公式", self.delete_formula)
-                    menu.addAction("✅ 验证公式", self.validate_formula)
+            _, formula_obj = self._get_mapping_for_item(
+                selected_item, self._active_formula_column
+            )
+            has_formula = bool(
+                formula_obj and formula_obj.formula and formula_obj.formula.strip()
+            )
+
+            copy_action = menu.addAction("📋 复制公式", self.copy_formula)
+            delete_action = menu.addAction("🗑️ 删除公式", self.delete_formula)
+            validate_action = menu.addAction("✅ 验证公式", self.validate_formula)
+
+            if not has_formula:
+                tooltip = "当前项目暂无公式"
+                for action in (copy_action, delete_action, validate_action):
+                    action.setEnabled(False)
+                    action.setToolTip(tooltip)
+            else:
+                copy_action.setToolTip("复制该项目的映射公式")
+                delete_action.setToolTip("删除该项目的映射公式")
+                validate_action.setToolTip("验证该项目公式的语法")
 
             menu.addSeparator()
 
@@ -3790,9 +5476,15 @@ class MainWindow(QMainWindow):
 
         # 状态操作
         status_menu = menu.addMenu("⚡ 状态操作")
-        status_menu.addAction("标记为待处理", lambda: self.batch_set_status(FormulaStatus.PENDING))
-        status_menu.addAction("标记为已验证", lambda: self.batch_set_status(FormulaStatus.VALIDATED))
-        status_menu.addAction("标记为错误", lambda: self.batch_set_status(FormulaStatus.ERROR))
+        status_menu.addAction(
+            "标记为待处理", lambda: self.batch_set_status(FormulaStatus.PENDING)
+        )
+        status_menu.addAction(
+            "标记为已验证", lambda: self.batch_set_status(FormulaStatus.VALIDATED)
+        )
+        status_menu.addAction(
+            "标记为错误", lambda: self.batch_set_status(FormulaStatus.ERROR)
+        )
 
         # 导出操作
         export_menu = menu.addMenu("💾 导出操作")
@@ -3815,12 +5507,45 @@ class MainWindow(QMainWindow):
         selected_indexes = self.main_data_grid.selectionModel().selectedRows()
 
         for index in selected_indexes:
-            if hasattr(self.target_model, 'get_target_item'):
+            if hasattr(self.target_model, "get_target_item"):
                 item = self.target_model.get_target_item(index)
                 if item:
                     selected_items.append(item)
 
         return selected_items
+
+    def _get_mapping_for_item(
+        self, target_item: TargetItem, preferred_column: Optional[str] = None
+    ) -> Tuple[Optional[str], Optional[MappingFormula]]:
+        if not self.workbook_manager:
+            return None, None
+
+        column_map = self.workbook_manager.mapping_formulas.get(target_item.id, {})
+        if isinstance(column_map, MappingFormula):
+            return column_map.column_key or "__default__", column_map
+
+        if not column_map:
+            return None, None
+
+        if preferred_column and preferred_column in column_map:
+            return preferred_column, column_map[preferred_column]
+
+        # 优先返回有公式的列
+        for key, mapping in column_map.items():
+            if mapping.formula:
+                return key, mapping
+
+        # 否则返回任意列
+        key, mapping = next(iter(column_map.items()))
+        return key, mapping
+
+    def _iter_mappings_for_item(self, target_item: TargetItem):
+        if not self.workbook_manager:
+            return []
+        column_map = self.workbook_manager.mapping_formulas.get(target_item.id, {})
+        if isinstance(column_map, MappingFormula):
+            return [(column_map.column_key or "__default__", column_map)]
+        return list(column_map.items())
 
     def edit_formula(self):
         """编辑公式 - 使用专用的公式编辑对话框"""
@@ -3829,29 +5554,41 @@ class MainWindow(QMainWindow):
             target_item = selected_items[0]
             self.log_manager.info(f"📝 编辑公式: {target_item.name}")
 
-            # 打开公式编辑对话框
-            dialog = FormulaEditDialog(target_item, self.workbook_manager, self)
+            current_index = self.main_data_grid.currentIndex()
+            column_meta_lookup = getattr(self.target_model, "_column_meta_at", None)
+            meta = (
+                column_meta_lookup(current_index.column())
+                if current_index.isValid() and callable(column_meta_lookup)
+                else None
+            )
+
+            column_key = meta["key"] if meta else None
+            column_name = meta["name"] if meta else None
+
+            if not column_key:
+                column_key, mapping = self._get_mapping_for_item(
+                    target_item, self._active_formula_column
+                )
+                column_name = (
+                    (mapping.column_name if mapping else None)
+                    or column_key
+                    or "__default__"
+                )
+            else:
+                mapping = self.workbook_manager.get_mapping(target_item.id, column_key)
+
+            self._active_formula_column = column_key or "__default__"
+
+            dialog = FormulaEditDialog(
+                target_item,
+                self.workbook_manager,
+                self,
+                column_key=self._active_formula_column,
+                column_name=column_name or self._active_formula_column,
+            )
+
             if dialog.exec() == QDialog.Accepted:
-                # 获取新的公式
-                new_formula = dialog.get_formula()
-                if new_formula:
-                    # 更新映射公式
-                    if target_item.id not in self.workbook_manager.mapping_formulas:
-                        self.workbook_manager.mapping_formulas[target_item.id] = MappingFormula(
-                            target_id=target_item.id,
-                            formula=""  # 创建时先用空公式，后面会设置new_formula
-                        )
-
-                    formula_obj = self.workbook_manager.mapping_formulas[target_item.id]
-                    formula_obj.formula = new_formula
-                    formula_obj.status = FormulaStatus.VALIDATED
-                    formula_obj.validation_error = None
-
-                    # 刷新显示
-                    self.refresh_main_table()
-                    self.log_manager.success(f"✅ 公式已更新: {new_formula}")
-                else:
-                    self.log_manager.info("❌ 取消编辑公式")
+                self.handle_formula_updates([target_item.id], reason="dialog")
         else:
             self.log_manager.warning("请选择一个目标项进行公式编辑")
 
@@ -3862,12 +5599,20 @@ class MainWindow(QMainWindow):
             target_item = selected_items[0]
 
             # 获取公式信息
-            formula_info = "无公式"
-            if target_item.id in self.workbook_manager.mapping_formulas:
-                formula = self.workbook_manager.mapping_formulas[target_item.id]
-                formula_info = f"公式: {formula.formula}\n状态: {formula.status.value}"
-                if formula.validation_error:
-                    formula_info += f"\n错误: {formula.validation_error}"
+            formula_lines: List[str] = []
+            for column_key, mapping in self._iter_mappings_for_item(target_item):
+                formula_text = mapping.formula or (
+                    f"常量 {mapping.constant_value}"
+                    if mapping.constant_value not in (None, "")
+                    else "(空)"
+                )
+                status = mapping.status.value
+                line = f"{mapping.column_name or column_key}: {formula_text} | 状态: {status}"
+                if mapping.validation_error:
+                    line += f" | 错误: {mapping.validation_error}"
+                formula_lines.append(line)
+
+            formula_info = "\n".join(formula_lines) if formula_lines else "无公式"
 
             # 创建详情对话框
             detail_text = f"""项目详情:
@@ -3900,74 +5645,130 @@ class MainWindow(QMainWindow):
     def copy_formula(self):
         """复制公式"""
         selected_items = self.get_selected_target_items()
-        if len(selected_items) == 1:
-            target_item = selected_items[0]
-            if target_item.id in self.workbook_manager.mapping_formulas:
-                formula = self.workbook_manager.mapping_formulas[target_item.id]
-                if formula.formula:
-                    # 复制到剪贴板
-                    clipboard = QApplication.clipboard()
-                    clipboard.setText(formula.formula)
-                    self.log_manager.info(f"📋 已复制公式: {formula.formula}")
-                else:
-                    self.log_manager.warning("公式为空，无法复制")
-            else:
-                self.log_manager.warning("该项目没有公式")
+        if len(selected_items) != 1 or not self.workbook_manager:
+            return
+
+        target_item = selected_items[0]
+        column_key, mapping = self._get_mapping_for_item(
+            target_item, self._active_formula_column
+        )
+
+        if not mapping:
+            self.log_manager.warning("当前项目没有可复制的公式")
+            return
+
+        value_text = mapping.formula or (
+            str(mapping.constant_value)
+            if mapping.constant_value not in (None, "")
+            else ""
+        )
+        if not value_text:
+            self.log_manager.warning("当前列没有可复制的公式或常量")
+            return
+
+        clipboard = QApplication.clipboard()
+        clipboard.setText(value_text)
+        self.copied_formulas = [
+            {
+                "column_key": column_key,
+                "column_name": mapping.column_name or column_key,
+                "formula": mapping.formula,
+                "constant": mapping.constant_value,
+            }
+        ]
+        self.log_manager.info(f"📋 已复制公式: {value_text}")
 
     def delete_formula(self):
         """删除公式"""
         selected_items = self.get_selected_target_items()
-        if len(selected_items) == 1:
-            target_item = selected_items[0]
-            if target_item.id in self.workbook_manager.mapping_formulas:
-                # 确认删除
-                reply = QMessageBox.question(
-                    self, "确认删除",
-                    f"确定要删除项目 '{target_item.name}' 的公式吗？",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.No
-                )
-                if reply == QMessageBox.Yes:
-                    del self.workbook_manager.mapping_formulas[target_item.id]
-                    # 刷新显示
-                    self.target_model.dataChanged.emit(
-                        self.target_model.index(0, 0),
-                        self.target_model.index(self.target_model.rowCount()-1, self.target_model.columnCount()-1)
-                    )
-                    self.log_manager.info(f"🗑️ 已删除公式: {target_item.name}")
-            else:
-                self.log_manager.warning("该项目没有公式")
+        if len(selected_items) != 1 or not self.workbook_manager:
+            return
+
+        target_item = selected_items[0]
+        column_key, mapping = self._get_mapping_for_item(
+            target_item, self._active_formula_column
+        )
+
+        if not mapping or (
+            not mapping.formula and mapping.constant_value in (None, "")
+        ):
+            self.log_manager.warning("当前项目没有可删除的公式")
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "确认删除",
+            f"确定要删除项目 '{target_item.name}' 的列映射（{mapping.column_name or column_key}）吗？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+
+        if reply == QMessageBox.Yes:
+            self.workbook_manager.remove_mapping(target_item.id, column_key)
+            self.handle_formula_updates([target_item.id], reason="delete")
+            self.log_manager.info(
+                f"🗑️ 已删除公式: {target_item.name} · {mapping.column_name or column_key}"
+            )
 
     def validate_formula(self):
         """验证公式"""
         selected_items = self.get_selected_target_items()
-        if len(selected_items) == 1:
-            target_item = selected_items[0]
-            if target_item.id in self.workbook_manager.mapping_formulas:
-                formula = self.workbook_manager.mapping_formulas[target_item.id]
-                if formula.formula:
-                    # 这里可以集成公式验证逻辑
-                    try:
-                        # 简单的语法检查
-                        if not formula.formula.strip():
-                            raise ValueError("公式不能为空")
+        if len(selected_items) != 1 or not self.workbook_manager:
+            return
 
-                        # 可以添加更复杂的验证逻辑
-                        formula.is_valid = True
-                        formula.validation_error = ""
-                        self.log_manager.info(f"✅ 公式验证通过: {formula.formula}")
+        target_item = selected_items[0]
+        column_key, mapping = self._get_mapping_for_item(
+            target_item, self._active_formula_column
+        )
 
-                    except Exception as e:
-                        formula.is_valid = False
-                        formula.validation_error = str(e)
-                        self.log_manager.error(f"❌ 公式验证失败: {e}")
-                else:
-                    self.log_manager.warning("公式为空，无法验证")
-            else:
-                self.log_manager.warning("该项目没有公式")
+        if not mapping or not mapping.formula:
+            self.log_manager.warning("当前项目没有可验证的公式")
+            return
+
+        is_valid, error_msg = validate_formula_syntax_three_segment(
+            mapping.formula, self.workbook_manager
+        )
+
+        if is_valid:
+            mapping.set_validation_result(True, "")
+            self.log_manager.success(f"✅ 公式验证通过: {mapping.formula}")
+        else:
+            mapping.set_validation_result(False, error_msg)
+            self.log_manager.error(f"❌ 公式验证失败: {error_msg}")
+            QMessageBox.warning(self, "验证失败", f"公式存在语法问题:\n{error_msg}")
+
+        index = self.target_model.get_index_for_target(target_item.id, 0)
+        if index.isValid():
+            left = index.sibling(index.row(), 0)
+            right = index.sibling(index.row(), self.target_model.columnCount() - 1)
+            self.target_model.dataChanged.emit(left, right, [Qt.DisplayRole])
+
+        if self.main_data_grid.currentIndex().isValid():
+            current_item = self.target_model.get_target_item(
+                self.main_data_grid.currentIndex()
+            )
+            if current_item and current_item.id == target_item.id:
+                self.update_property_inspector(current_item)
+
+    def insert_formula_example(self):
+        """在公式编辑器中插入示例公式"""
+        if not hasattr(self, "formula_editor") or not self.formula_editor:
+            return
+
+        sample_formula = "[利润表]A12 + [上年科目余额表]A4"
+        cursor = self.formula_editor.textCursor()
+        if cursor.position() > 0:
+            cursor.insertText(
+                " "
+                if not self.formula_editor.toPlainText().endswith((" ", "\n"))
+                else ""
+            )
+        cursor.insertText(sample_formula)
+        self.formula_editor.setTextCursor(cursor)
+        self.log_manager.info(f"💡 已插入示例公式: {sample_formula}")
 
     def on_main_grid_double_clicked(self, index: QModelIndex):
-        """主数据网格双击事件处理"""
+        """主数据网格双击事件处理 - 只允许数据列编辑公式"""
         if not index.isValid():
             return
 
@@ -3976,34 +5777,43 @@ class MainWindow(QMainWindow):
         if not target_item:
             return
 
-        if column == 3:  # 双击公式列，开启公式编辑对话框
-            self.log_manager.info(f"双击编辑公式: {target_item.name}")
+        column_meta_lookup = getattr(self.target_model, "_column_meta_at", None)
+        meta = column_meta_lookup(column) if callable(column_meta_lookup) else None
 
-            # 打开公式编辑对话框
-            dialog = FormulaEditDialog(target_item, self.workbook_manager, self)
-            if dialog.exec() == QDialog.Accepted:
-                # 获取新的公式
-                new_formula = dialog.get_formula()
-                if new_formula:
-                    # 更新映射公式
-                    if target_item.id not in self.workbook_manager.mapping_formulas:
-                        self.workbook_manager.mapping_formulas[target_item.id] = MappingFormula(
-                            target_id=target_item.id,
-                            formula=""  # 创建时先用空公式，后面会设置new_formula
-                        )
+        # ✅ 明确排除不可编辑的列（基于列名）
+        if meta:
+            column_name = meta.get("name", "")
 
-                    formula_obj = self.workbook_manager.mapping_formulas[target_item.id]
-                    formula_obj.formula = new_formula
-                    formula_obj.status = FormulaStatus.VALIDATED
-                    formula_obj.validation_error = None
+            # 项目列、行次列、状态列、级别列不允许编辑公式
+            non_editable_columns = ["项目", "行次", "状态", "级别"]
 
-                    # 刷新显示
-                    self.refresh_main_table()
-                    self.log_manager.success(f"✅ 公式已更新: {new_formula}")
-                else:
-                    self.log_manager.info("❌ 取消编辑公式")
+            if column_name in non_editable_columns:
+                self.log_manager.info(f"'{column_name}'列不支持编辑公式")
+                return
+
+            # 其他列：检查is_data_column
+            if meta.get("is_data_column", False):
+                column_key = meta["key"]
+                self._active_formula_column = column_key
+
+                self.log_manager.info(
+                    f"双击编辑公式: {target_item.name} · {column_name}"
+                )
+
+                dialog = FormulaEditDialog(
+                    target_item,
+                    self.workbook_manager,
+                    self,
+                    column_key=column_key,
+                    column_name=column_name,
+                )
+                if dialog.exec() == QDialog.Accepted:
+                    self.handle_formula_updates([target_item.id], reason="dialog")
+            else:
+                # 非数据列
+                self.log_manager.info(f"'{column_name}'列不支持编辑公式")
         else:
-            # 双击其他列，显示详情
+            # 双击静态列，显示详情
             self.log_manager.info(f"双击查看详情: {target_item.name}")
             self.view_details()
 
@@ -4014,9 +5824,10 @@ class MainWindow(QMainWindow):
             return
 
         reply = QMessageBox.question(
-            self, "确认操作",
+            self,
+            "确认操作",
             f"🤖 将对选中的 {len(selected_items)} 个项目执行AI映射，是否继续？",
-            QMessageBox.Yes | QMessageBox.No
+            QMessageBox.Yes | QMessageBox.No,
         )
 
         if reply == QMessageBox.Yes:
@@ -4048,21 +5859,35 @@ class MainWindow(QMainWindow):
         if not selected_items:
             return
 
-        formulas = []
+        copied_entries: List[Dict[str, Any]] = []
         for item in selected_items:
-            if self.workbook_manager:
-                formula = self.workbook_manager.mapping_formulas.get(item.id)
-                if formula:
-                    formulas.append(formula.formula)
+            column_key, mapping = self._get_mapping_for_item(
+                item, self._active_formula_column
+            )
+            if mapping and (
+                mapping.formula or mapping.constant_value not in (None, "")
+            ):
+                copied_entries.append(
+                    {
+                        "column_key": column_key,
+                        "column_name": mapping.column_name or column_key,
+                        "formula": mapping.formula,
+                        "constant": mapping.constant_value,
+                    }
+                )
 
-        if formulas:
-            # 存储到剪贴板（简化实现）
-            self.copied_formulas = formulas
-            self.log_manager.info(f"📋 已复制 {len(formulas)} 个公式")
+        if copied_entries:
+            self.copied_formulas = copied_entries
+            clipboard_text = "\n".join(
+                entry["formula"] if entry["formula"] else str(entry["constant"])
+                for entry in copied_entries
+            )
+            QApplication.clipboard().setText(clipboard_text)
+            self.log_manager.info(f"📋 已复制 {len(copied_entries)} 个公式/常量")
 
     def paste_formulas(self):
         """粘贴公式"""
-        if not hasattr(self, 'copied_formulas') or not self.copied_formulas:
+        if not hasattr(self, "copied_formulas") or not self.copied_formulas:
             QMessageBox.information(self, "提示", "没有可粘贴的公式")
             return
 
@@ -4070,26 +5895,36 @@ class MainWindow(QMainWindow):
         if not selected_items:
             return
 
-        # 应用复制的公式到选中项
         count = 0
+        updated_ids: List[str] = []
+        entry_count = len(self.copied_formulas)
         for i, item in enumerate(selected_items):
-            if i < len(self.copied_formulas):
-                formula = self.copied_formulas[i]
-                if self.workbook_manager:
-                    # 创建或更新映射公式
-                    if item.id not in self.workbook_manager.mapping_formulas:
-                        self.workbook_manager.mapping_formulas[item.id] = MappingFormula(
-                            target_id=item.id,
-                            formula=formula,
-                            status=FormulaStatus.USER_MODIFIED
-                        )
-                    else:
-                        self.workbook_manager.mapping_formulas[item.id].formula = formula
-                        self.workbook_manager.mapping_formulas[item.id].status = FormulaStatus.USER_MODIFIED
-                    count += 1
+            entry = self.copied_formulas[min(i, entry_count - 1)]
+            column_key = entry["column_key"] or "__default__"
+            column_name = entry.get("column_name", column_key)
+
+            mapping = self.workbook_manager.ensure_mapping(
+                item.id, column_key, column_name
+            )
+            if entry.get("formula"):
+                mapping.update_formula(
+                    entry["formula"],
+                    status=FormulaStatus.USER_MODIFIED,
+                    column_name=column_name,
+                )
+                mapping.constant_value = None
+            else:
+                mapping.update_formula(
+                    "", status=FormulaStatus.USER_MODIFIED, column_name=column_name
+                )
+                mapping.constant_value = entry.get("constant")
+            mapping.validation_error = ""
+            count += 1
+            updated_ids.append(item.id)
 
         self.log_manager.info(f"📋 已粘贴 {count} 个公式")
-        self.refresh_main_table()
+        if updated_ids:
+            self.handle_formula_updates(updated_ids, reason="paste")
 
     def clear_formulas(self):
         """清空公式"""
@@ -4098,20 +5933,37 @@ class MainWindow(QMainWindow):
             return
 
         reply = QMessageBox.question(
-            self, "确认操作",
+            self,
+            "确认操作",
             f"🗑️ 将清空选中的 {len(selected_items)} 个项目的公式，是否继续？",
-            QMessageBox.Yes | QMessageBox.No
+            QMessageBox.Yes | QMessageBox.No,
         )
 
         if reply == QMessageBox.Yes:
             count = 0
+            cleared_ids: List[str] = []
             for item in selected_items:
-                if self.workbook_manager and item.id in self.workbook_manager.mapping_formulas:
-                    del self.workbook_manager.mapping_formulas[item.id]
-                    count += 1
+                if not self.workbook_manager:
+                    continue
 
-            self.log_manager.info(f"🗑️ 已清空 {count} 个公式")
-            self.refresh_main_table()
+                if self._active_formula_column:
+                    if self.workbook_manager.get_mapping(
+                        item.id, self._active_formula_column
+                    ):
+                        self.workbook_manager.remove_mapping(
+                            item.id, self._active_formula_column
+                        )
+                        count += 1
+                        cleared_ids.append(item.id)
+                else:
+                    if item.id in self.workbook_manager.mapping_formulas:
+                        self.workbook_manager.remove_mapping(item.id, None)
+                        count += 1
+                        cleared_ids.append(item.id)
+
+            self.log_manager.info(f"🗑️ 已清空 {count} 个列映射")
+            if cleared_ids:
+                self.handle_formula_updates(cleared_ids, reason="clear")
 
     def batch_set_status(self, status: FormulaStatus):
         """批量设置状态"""
@@ -4121,15 +5973,14 @@ class MainWindow(QMainWindow):
 
         count = 0
         for item in selected_items:
-            if self.workbook_manager:
-                if item.id in self.workbook_manager.mapping_formulas:
-                    self.workbook_manager.mapping_formulas[item.id].status = status
-                    count += 1
+            for _, mapping in self._iter_mappings_for_item(item):
+                mapping.status = status
+                count += 1
 
         status_text = {
             FormulaStatus.PENDING: "待处理",
             FormulaStatus.VALIDATED: "已验证",
-            FormulaStatus.ERROR: "错误"
+            FormulaStatus.ERROR: "错误",
         }.get(status, "未知")
 
         self.log_manager.info(f"⚡ 已将 {count} 个项目标记为: {status_text}")
@@ -4146,33 +5997,14 @@ class MainWindow(QMainWindow):
         if not self.workbook_manager:
             return
 
-        success_count = 0
-        for item in selected_items:
-            formula = self.workbook_manager.mapping_formulas.get(item.id)
-            if formula and formula.formula:
-                try:
-                    # 执行计算（简化实现）
-                    result = CalculationResult(
-                        target_id=item.id,
-                        success=True,
-                        value=100.0,  # 模拟计算结果
-                        error_message=""
-                    )
-                    self.workbook_manager.calculation_results[item.id] = result
-                    formula.status = FormulaStatus.CALCULATED
-                    success_count += 1
-                except Exception as e:
-                    result = CalculationResult(
-                        target_id=item.id,
-                        success=False,
-                        value=None,
-                        error_message=str(e)
-                    )
-                    self.workbook_manager.calculation_results[item.id] = result
-                    formula.status = FormulaStatus.ERROR
+        target_ids = [
+            item.id for item in selected_items if self._iter_mappings_for_item(item)
+        ]
+        if not target_ids:
+            self.log_manager.warning("🧮 选中的项目中没有可计算的公式")
+            return
 
-        self.log_manager.info(f"🧮 批量计算完成，成功 {success_count} 个")
-        self.refresh_main_table()
+        self.handle_formula_updates(target_ids, reason="batch")
 
     def perform_batch_validation(self, selected_items: List[TargetItem]):
         """执行批量验证"""
@@ -4181,14 +6013,18 @@ class MainWindow(QMainWindow):
 
         valid_count = 0
         for item in selected_items:
-            formula = self.workbook_manager.mapping_formulas.get(item.id)
-            if formula and formula.formula:
-                # 执行公式语法验证
-                if validate_formula_syntax_v2(formula.formula):
-                    formula.status = FormulaStatus.VALIDATED
+            for _, mapping in self._iter_mappings_for_item(item):
+                if not mapping.formula:
+                    continue
+                is_valid, _ = validate_formula_syntax_three_segment(
+                    mapping.formula, self.workbook_manager
+                )
+                if is_valid:
+                    mapping.status = FormulaStatus.VALIDATED
+                    mapping.validation_error = ""
                     valid_count += 1
                 else:
-                    formula.status = FormulaStatus.ERROR
+                    mapping.status = FormulaStatus.ERROR
 
         self.log_manager.info(f"✅ 批量验证完成，有效 {valid_count} 个")
         self.refresh_main_table()
@@ -4207,7 +6043,9 @@ class MainWindow(QMainWindow):
 
     def on_template_applied(self, template_name: str, applied_count: int):
         """模板应用完成处理"""
-        self.log_manager.info(f"📋 模板 '{template_name}' 已应用到 {applied_count} 个项目")
+        self.log_manager.info(
+            f"📋 模板 '{template_name}' 已应用到 {applied_count} 个项目"
+        )
         self.refresh_main_table()
 
     def apply_from_template(self):
@@ -4253,22 +6091,31 @@ class MainWindow(QMainWindow):
             return
 
         reply = QMessageBox.question(
-            self, "确认操作",
+            self,
+            "确认操作",
             f"🔧 将重置选中的 {len(selected_items)} 个项目的映射关系，是否继续？",
-            QMessageBox.Yes | QMessageBox.No
+            QMessageBox.Yes | QMessageBox.No,
         )
 
         if reply == QMessageBox.Yes:
             count = 0
+            cleared_ids: List[str] = []
             for item in selected_items:
-                if self.workbook_manager:
-                    if item.id in self.workbook_manager.mapping_formulas:
-                        self.workbook_manager.mapping_formulas[item.id].formula = ""
-                        self.workbook_manager.mapping_formulas[item.id].status = FormulaStatus.EMPTY
-                        count += 1
+                for column_key, mapping in self._iter_mappings_for_item(item):
+                    mapping.update_formula(
+                        "", status=FormulaStatus.EMPTY, column_name=mapping.column_name
+                    )
+                    mapping.constant_value = None
+                    mapping.calculation_result = None
+                    mapping.last_calculated = None
+                    mapping.validation_error = ""
+                    count += 1
+                    if item.id not in cleared_ids:
+                        cleared_ids.append(item.id)
 
             self.log_manager.info(f"🔧 已重置 {count} 个映射关系")
-            self.refresh_main_table()
+            if cleared_ids:
+                self.handle_formula_updates(cleared_ids, reason="reset")
 
     def find_references(self):
         """查找引用关系"""
@@ -4280,8 +6127,9 @@ class MainWindow(QMainWindow):
 
     def refresh_main_table(self):
         """刷新主表格"""
-        if hasattr(self, 'target_model') and self.target_model:
+        if hasattr(self, "target_model") and self.target_model:
             self.target_model.layoutChanged.emit()
+        self.schedule_main_table_resize(0)
 
     def on_target_item_selected(self, target_id: str):
         """目标项选择信号处理"""
@@ -4297,52 +6145,61 @@ class MainWindow(QMainWindow):
             self.log_manager.info(f"🧭 导航到分类: {item_name}")
             # 可以在这里添加更多导航逻辑
 
-    def update_category_filter(self):
-        """更新分类筛选下拉框"""
-        if not self.target_model:
-            return
+    def _initialize_ai_service(self):
+        """初始化 AI 服务配置"""
+        try:
+            # 从配置文件加载或使用默认值
+            # TODO: 实现配置文件读取
+            default_config = ProviderConfig(
+                api_key="UFXLzCFM2BtvfvAc1ZC5zRkJLPJKvFlKeBKYfI5evJNqMO7t",  # Gemini转发服务
+                base_url="https://api.kkyyxx.xyz/v1",
+                model="gemini-2.5-pro",
+                temperature=0.3,
+                max_tokens=2000,
+                timeout=30
+            )
 
-        current_text = self.category_filter.currentText()
-        self.category_filter.clear()
-        self.category_filter.addItem("全部分类")
+            # 初始化控制器
+            self.chat_controller.initialize(default_config)
 
-        # 添加所有分类
-        for category_node in self.target_model.root_items:
-            if isinstance(category_node, CategoryNode):
-                self.category_filter.addItem(category_node.name)
+        except Exception as e:
+            print(f"AI 服务初始化警告: {e}")
+            # 不阻止程序启动，仅记录警告
 
-        # 恢复之前的选择
-        index = self.category_filter.findText(current_text)
-        if index >= 0:
-            self.category_filter.setCurrentIndex(index)
-
+    def show_ai_assistant(self):
+        """显示 AI 分析助手对话窗口"""
+        try:
+            self.chat_controller.show_chat_window()
+        except Exception as e:
+            QMessageBox.warning(
+                self,
+                "AI 助手错误",
+                f"无法启动 AI 助手:\n{str(e)}\n\n请检查 API 配置。"
+            )
 
     def show_about(self):
         """显示关于信息"""
         QMessageBox.about(
-            self, "关于",
+            self,
+            "关于",
             "AI辅助财务报表数据映射与填充工具\n"
             "版本: PySide6 v1.0\n"
-            "基于程序要求.md开发"
+            "基于程序要求.md开发",
         )
 
     def load_settings(self):
         """加载设置"""
         try:
-            self.ai_url_edit.setText(
-                self.settings.value("ai_url", "https://api.openai.com/v1/chat/completions")
-            )
-            self.ai_model_edit.setText(
-                self.settings.value("ai_model", "gpt-4")
-            )
+            # AI配置现在由ChatController管理,这里不再需要加载
+            pass
         except:
             pass
 
     def save_settings(self):
         """保存设置"""
         try:
-            self.settings.setValue("ai_url", self.ai_url_edit.text())
-            self.settings.setValue("ai_model", self.ai_model_edit.text())
+            # AI配置现在由ChatController管理,这里不再需要保存
+            pass
         except:
             pass
 
@@ -4425,10 +6282,17 @@ class MappingTemplateDialog(QDialog):
 
         self.template_list = QTableWidget()
         self.template_list.setColumnCount(4)
-        self.template_list.setHorizontalHeaderLabels(["模板名称", "来源表格", "映射数量", "创建时间"])
-        self.template_list.horizontalHeader().setStretchLastSection(True)
+        self.template_list.setHorizontalHeaderLabels(
+            ["模板名称", "来源表格", "映射数量", "创建时间"]
+        )
+        template_header = self.template_list.horizontalHeader()
+        ensure_interactive_header(template_header, stretch_last=True)
+        ensure_word_wrap(self.template_list)
         self.template_list.setSelectionBehavior(QTableWidget.SelectRows)
         self.template_list.setAlternatingRowColors(True)
+        # 应用统一的网格线样式
+        self.template_list.setStyleSheet(TABLE_GRID_STYLE)
+        self.template_list.setShowGrid(True)  # 确保显示网格线
         self.template_list.itemSelectionChanged.connect(self.on_template_selected)
         left_layout.addWidget(self.template_list)
 
@@ -4479,6 +6343,10 @@ class MappingTemplateDialog(QDialog):
         apply_layout = QVBoxLayout(apply_group)
 
         self.target_sheet_combo = QComboBox()
+        self.target_sheet_combo.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Preferred
+        )
+        self.target_sheet_combo.setMinimumWidth(200)
         self.update_target_sheets()
         apply_layout.addWidget(QLabel("选择目标表格:"))
         apply_layout.addWidget(self.target_sheet_combo)
@@ -4501,7 +6369,12 @@ class MappingTemplateDialog(QDialog):
         self.mapping_preview = QTableWidget()
         self.mapping_preview.setColumnCount(2)
         self.mapping_preview.setHorizontalHeaderLabels(["目标项", "公式"])
-        self.mapping_preview.horizontalHeader().setStretchLastSection(True)
+        mapping_preview_header = self.mapping_preview.horizontalHeader()
+        ensure_interactive_header(mapping_preview_header, stretch_last=True)
+        ensure_word_wrap(self.mapping_preview)
+        # 应用统一的网格线样式
+        self.mapping_preview.setStyleSheet(TABLE_GRID_STYLE)
+        self.mapping_preview.setShowGrid(True)  # 确保显示网格线
         preview_layout.addWidget(self.mapping_preview)
 
         right_layout.addWidget(preview_group)
@@ -4544,10 +6417,19 @@ class MappingTemplateDialog(QDialog):
             self.template_list.setItem(row, 2, count_item)
 
             # 创建时间
-            time_item = QTableWidgetItem(template.created_time.strftime("%Y-%m-%d %H:%M"))
+            time_item = QTableWidgetItem(
+                template.created_time.strftime("%Y-%m-%d %H:%M")
+            )
             self.template_list.setItem(row, 3, time_item)
 
         self.template_list.resizeColumnsToContents()
+        template_header = self.template_list.horizontalHeader()
+        ensure_interactive_header(template_header, stretch_last=True)
+        for column in range(self.template_list.columnCount()):
+            template_header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+            self.template_list.resizeColumnToContents(column)
+            template_header.setSectionResizeMode(column, QHeaderView.Interactive)
+        schedule_row_resize(self.template_list, 60)
 
     def on_template_selected(self):
         """模板选择处理"""
@@ -4579,6 +6461,7 @@ class MappingTemplateDialog(QDialog):
 
             # 清空预览
             self.mapping_preview.setRowCount(0)
+            schedule_row_resize(self.mapping_preview, 40)
 
             # 禁用操作按钮
             self.apply_btn.setEnabled(False)
@@ -4600,6 +6483,12 @@ class MappingTemplateDialog(QDialog):
             self.mapping_preview.setItem(row, 1, formula_item)
 
         self.mapping_preview.resizeColumnsToContents()
+        preview_header = self.mapping_preview.horizontalHeader()
+        ensure_interactive_header(preview_header, stretch_last=True)
+        for column in range(self.mapping_preview.columnCount()):
+            preview_header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+            self.mapping_preview.resizeColumnToContents(column)
+            preview_header.setSectionResizeMode(column, QHeaderView.Interactive)
 
     def update_target_sheets(self):
         """更新目标表格下拉框"""
@@ -4607,7 +6496,9 @@ class MappingTemplateDialog(QDialog):
 
         if self.workbook_manager:
             # 添加所有快报表（使用安全辅助函数）
-            for sheet_name, _ in self._safe_iterate_sheets(self.workbook_manager.flash_report_sheets):
+            for sheet_name, _ in self._safe_iterate_sheets(
+                self.workbook_manager.flash_report_sheets
+            ):
                 self.target_sheet_combo.addItem(f"📊 {sheet_name}", sheet_name)
 
     def create_new_template(self):
@@ -4632,7 +6523,7 @@ class MappingTemplateDialog(QDialog):
 
         if file_path:
             try:
-                with open(file_path, 'r', encoding='utf-8') as f:
+                with open(file_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
 
                 template = MappingTemplate.from_dict(data)
@@ -4640,7 +6531,9 @@ class MappingTemplateDialog(QDialog):
                 self.template_manager.save_to_file()
                 self.refresh_template_list()
 
-                QMessageBox.information(self, "成功", f"模板 '{template.name}' 导入成功")
+                QMessageBox.information(
+                    self, "成功", f"模板 '{template.name}' 导入成功"
+                )
 
             except Exception as e:
                 QMessageBox.critical(self, "错误", f"导入失败: {str(e)}")
@@ -4664,7 +6557,7 @@ class MappingTemplateDialog(QDialog):
 
         if file_path:
             try:
-                with open(file_path, 'w', encoding='utf-8') as f:
+                with open(file_path, "w", encoding="utf-8") as f:
                     json.dump(template.to_dict(), f, ensure_ascii=False, indent=2)
 
                 QMessageBox.information(self, "成功", f"模板已导出到: {file_path}")
@@ -4692,10 +6585,11 @@ class MappingTemplateDialog(QDialog):
 
         # 确认应用
         reply = QMessageBox.question(
-            self, "确认应用",
+            self,
+            "确认应用",
             f"将模板 '{template.name}' 应用到表格 '{target_sheet}'？\n"
             f"包含 {len(template.mappings)} 个映射关系。",
-            QMessageBox.Yes | QMessageBox.No
+            QMessageBox.Yes | QMessageBox.No,
         )
 
         if reply == QMessageBox.Yes:
@@ -4704,8 +6598,9 @@ class MappingTemplateDialog(QDialog):
             )
 
             QMessageBox.information(
-                self, "应用完成",
-                f"成功应用 {applied_count} 个映射关系到表格 '{target_sheet}'"
+                self,
+                "应用完成",
+                f"成功应用 {applied_count} 个映射关系到表格 '{target_sheet}'",
             )
 
             # 发送信号
@@ -4740,9 +6635,10 @@ class MappingTemplateDialog(QDialog):
 
         if template:
             reply = QMessageBox.question(
-                self, "确认删除",
+                self,
+                "确认删除",
                 f"确定要删除模板 '{template.name}' 吗？\n此操作不可撤销。",
-                QMessageBox.Yes | QMessageBox.No
+                QMessageBox.Yes | QMessageBox.No,
             )
 
             if reply == QMessageBox.Yes:
@@ -4782,6 +6678,10 @@ class TemplateCreationDialog(QDialog):
         info_layout.addRow("描述:", self.description_edit)
 
         self.source_sheet_combo = QComboBox()
+        self.source_sheet_combo.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Preferred
+        )
+        self.source_sheet_combo.setMinimumWidth(200)
         self.populate_source_sheets()
         info_layout.addRow("来源表格:", self.source_sheet_combo)
 
@@ -4808,7 +6708,7 @@ class TemplateCreationDialog(QDialog):
                 if isinstance(sheet, str):
                     sheet_name = sheet
                 else:
-                    sheet_name = getattr(sheet, 'name', str(sheet))
+                    sheet_name = getattr(sheet, "name", str(sheet))
                 self.source_sheet_combo.addItem(sheet_name)
 
     def create_template(self):
@@ -4833,9 +6733,10 @@ class TemplateCreationDialog(QDialog):
 
         if not self.template.mappings:
             reply = QMessageBox.question(
-                self, "警告",
+                self,
+                "警告",
                 f"表格 '{source_sheet}' 中没有找到映射关系。\n是否仍要创建空模板？",
-                QMessageBox.Yes | QMessageBox.No
+                QMessageBox.Yes | QMessageBox.No,
             )
 
             if reply != QMessageBox.Yes:
@@ -4885,7 +6786,16 @@ class TemplateEditDialog(QDialog):
         self.mapping_table = QTableWidget()
         self.mapping_table.setColumnCount(3)
         self.mapping_table.setHorizontalHeaderLabels(["目标项", "公式", "操作"])
-        self.mapping_table.horizontalHeader().setStretchLastSection(False)
+        mapping_header = self.mapping_table.horizontalHeader()
+        ensure_interactive_header(mapping_header, stretch_last=False)
+        for column in range(self.mapping_table.columnCount()):
+            mapping_header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+            self.mapping_table.resizeColumnToContents(column)
+            mapping_header.setSectionResizeMode(column, QHeaderView.Interactive)
+        ensure_word_wrap(self.mapping_table)
+        # 应用统一的网格线样式
+        self.mapping_table.setStyleSheet(TABLE_GRID_STYLE)
+        self.mapping_table.setShowGrid(True)  # 确保显示网格线
         mapping_layout.addWidget(self.mapping_table)
 
         layout.addWidget(mapping_group)
@@ -4930,10 +6840,18 @@ class TemplateEditDialog(QDialog):
             self.mapping_table.setCellWidget(row, 2, delete_btn)
 
         self.mapping_table.resizeColumnsToContents()
+        schedule_row_resize(self.mapping_table, 60)
+        mapping_header = self.mapping_table.horizontalHeader()
+        ensure_interactive_header(mapping_header, stretch_last=False)
+        for column in range(self.mapping_table.columnCount()):
+            mapping_header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+            self.mapping_table.resizeColumnToContents(column)
+            mapping_header.setSectionResizeMode(column, QHeaderView.Interactive)
 
     def delete_mapping(self, row: int):
         """删除映射"""
         self.mapping_table.removeRow(row)
+        schedule_row_resize(self.mapping_table, 40)
 
     def save_template(self):
         """保存模板"""
@@ -4985,7 +6903,9 @@ class WorkbookConfirmationDialog(QDialog):
 
         # 标题
         title_label = QLabel("工作表分类确认")
-        title_label.setStyleSheet("font-size: 18px; font-weight: bold; margin: 10px; color: #2E86AB;")
+        title_label.setStyleSheet(
+            "font-size: 18px; font-weight: bold; margin: 10px; color: #2E86AB;"
+        )
         title_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(title_label)
 
@@ -4994,7 +6914,9 @@ class WorkbookConfirmationDialog(QDialog):
             f"文件：{self.workbook_manager.file_name}\n"
             "请确认每个工作表的分类。您可以调整系统的自动识别结果，或取消不需要的工作表。"
         )
-        info_label.setStyleSheet("color: #666; font-size: 12px; margin: 10px; padding: 10px; border: 1px solid #dee2e6; border-radius: 5px;")
+        info_label.setStyleSheet(
+            "color: #666; font-size: 12px; margin: 10px; padding: 10px; border: 1px solid #dee2e6; border-radius: 5px;"
+        )
         layout.addWidget(info_label)
 
         # 创建表格
@@ -5004,18 +6926,26 @@ class WorkbookConfirmationDialog(QDialog):
 
         self.sheets_table = QTableWidget()
         self.sheets_table.setColumnCount(4)
-        self.sheets_table.setHorizontalHeaderLabels(["工作表名称", "系统建议", "用户分类", "是否启用"])
+        self.sheets_table.setHorizontalHeaderLabels(
+            ["工作表名称", "系统建议", "用户分类", "是否启用"]
+        )
 
         # 设置表格属性
         header = self.sheets_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.Stretch)  # 工作表名称列自适应
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # 系统建议列
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # 用户分类列
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # 是否启用列
+        ensure_interactive_header(header, stretch_last=False)
+        for column in range(4):
+            header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+            self.sheets_table.resizeColumnToContents(column)
+            header.setSectionResizeMode(column, QHeaderView.Interactive)
+        header.setStretchLastSection(False)
 
         self.sheets_table.setAlternatingRowColors(True)
         self.sheets_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.sheets_table.verticalHeader().setVisible(False)
+        ensure_word_wrap(self.sheets_table)
+        # 应用统一的网格线样式
+        self.sheets_table.setStyleSheet(TABLE_GRID_STYLE)
+        self.sheets_table.setShowGrid(True)  # 确保显示网格线
 
         layout.addWidget(self.sheets_table)
 
@@ -5050,7 +6980,9 @@ class WorkbookConfirmationDialog(QDialog):
 
         self.confirm_btn = QPushButton("确认并开始处理")
         self.confirm_btn.setDefault(True)
-        self.confirm_btn.setStyleSheet("QPushButton { background-color: #28a745; color: white; font-weight: bold; padding: 8px 16px; }")
+        self.confirm_btn.setStyleSheet(
+            "QPushButton { background-color: #28a745; color: white; font-weight: bold; padding: 8px 16px; }"
+        )
         self.confirm_btn.clicked.connect(self.confirm_classifications)
         button_layout.addWidget(self.confirm_btn)
 
@@ -5112,13 +7044,24 @@ class WorkbookConfirmationDialog(QDialog):
 
             # 保存分类信息
             self.sheet_classifications[sheet_name] = {
-                'suggestion': suggestion,
-                'combo': classification_combo,
-                'checkbox': enable_checkbox,
-                'original_type': sheet_type
+                "suggestion": suggestion,
+                "combo": classification_combo,
+                "checkbox": enable_checkbox,
+                "original_type": sheet_type,
             }
 
         self.update_stats()
+        self.sheets_table.resizeColumnsToContents()
+        header = self.sheets_table.horizontalHeader()
+        column_limits = {0: (240, 420), 1: (120, 200), 2: (140, 260), 3: (100, 160)}
+        for column, (min_w, max_w) in column_limits.items():
+            current_width = self.sheets_table.columnWidth(column)
+            bounded_width = max(min_w, min(current_width, max_w))
+            self.sheets_table.setColumnWidth(column, bounded_width)
+            header.setSectionResizeMode(column, QHeaderView.Interactive)
+
+        ensure_word_wrap(self.sheets_table)
+        schedule_row_resize(self.sheets_table, 60)
 
     def update_stats(self):
         """更新统计信息"""
@@ -5128,9 +7071,9 @@ class WorkbookConfirmationDialog(QDialog):
         enabled_count = 0
 
         for sheet_name, info in self.sheet_classifications.items():
-            if info['checkbox'].isChecked():
+            if info["checkbox"].isChecked():
                 enabled_count += 1
-                classification = info['combo'].currentText()
+                classification = info["combo"].currentText()
                 if classification == "快报表":
                     flash_report_count += 1
                 elif classification == "数据来源表":
@@ -5148,40 +7091,49 @@ class WorkbookConfirmationDialog(QDialog):
     def select_all_sheets(self):
         """全选所有工作表"""
         for info in self.sheet_classifications.values():
-            info['checkbox'].setChecked(True)
+            info["checkbox"].setChecked(True)
 
     def deselect_all_sheets(self):
         """取消选择所有工作表"""
         for info in self.sheet_classifications.values():
-            info['checkbox'].setChecked(False)
+            info["checkbox"].setChecked(False)
 
     def use_auto_classification(self):
         """使用系统自动分类"""
         for info in self.sheet_classifications.values():
-            info['combo'].setCurrentText(info['suggestion'])
+            info["combo"].setCurrentText(info["suggestion"])
 
     def confirm_classifications(self):
         """确认分类设置"""
         # 检查是否至少启用了一个工作表
-        enabled_sheets = [name for name, info in self.sheet_classifications.items()
-                         if info['checkbox'].isChecked()]
+        enabled_sheets = [
+            name
+            for name, info in self.sheet_classifications.items()
+            if info["checkbox"].isChecked()
+        ]
 
         if not enabled_sheets:
             from PySide6.QtWidgets import QMessageBox
+
             QMessageBox.warning(self, "警告", "请至少启用一个工作表！")
             return
 
         # 检查是否有快报表
-        flash_reports = [name for name, info in self.sheet_classifications.items()
-                        if info['checkbox'].isChecked() and info['combo'].currentText() == "快报表"]
+        flash_reports = [
+            name
+            for name, info in self.sheet_classifications.items()
+            if info["checkbox"].isChecked() and info["combo"].currentText() == "快报表"
+        ]
 
         if not flash_reports:
             from PySide6.QtWidgets import QMessageBox
+
             reply = QMessageBox.question(
-                self, "确认",
+                self,
+                "确认",
                 "没有选择任何快报表，这意味着只会处理数据来源表。是否继续？",
                 QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                QMessageBox.No,
             )
             if reply == QMessageBox.No:
                 return
@@ -5191,24 +7143,24 @@ class WorkbookConfirmationDialog(QDialog):
     def get_final_classifications(self):
         """获取最终的分类结果"""
         result = {
-            'flash_reports': [],
-            'data_sources': [],
-            'skipped': [],
-            'disabled': []
+            "flash_reports": [],
+            "data_sources": [],
+            "skipped": [],
+            "disabled": [],
         }
 
         for sheet_name, info in self.sheet_classifications.items():
-            if not info['checkbox'].isChecked():
-                result['disabled'].append(sheet_name)
+            if not info["checkbox"].isChecked():
+                result["disabled"].append(sheet_name)
                 continue
 
-            classification = info['combo'].currentText()
+            classification = info["combo"].currentText()
             if classification == "快报表":
-                result['flash_reports'].append(sheet_name)
+                result["flash_reports"].append(sheet_name)
             elif classification == "数据来源表":
-                result['data_sources'].append(sheet_name)
+                result["data_sources"].append(sheet_name)
             else:
-                result['skipped'].append(sheet_name)
+                result["skipped"].append(sheet_name)
 
         return result
 
@@ -5226,27 +7178,40 @@ class SheetClassificationConfirmDialog(QDialog):
     def init_ui(self):
         """初始化用户界面"""
         self.setWindowTitle(f"工作表分类确认 - {self.sheet_name}")
-        self.setFixedSize(500, 350)
+        self.setMinimumSize(540, 380)
+        self.resize(640, 420)
         self.setModal(True)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(20)
 
         # 标题
         title_label = QLabel(f"请确认工作表的类型")
-        title_label.setStyleSheet("font-size: 16px; font-weight: bold; margin: 10px;")
+        title_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #2E86AB;")
+        title_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(title_label)
 
         # 工作表信息
         info_group = QGroupBox("工作表信息")
         info_layout = QFormLayout(info_group)
+        info_layout.setContentsMargins(16, 12, 16, 12)
+        info_layout.setSpacing(12)
+        info_group.setStyleSheet(
+            "QGroupBox { border: none; font-weight: bold; margin-top: 8px; }"
+            "QGroupBox::title { subcontrol-origin: margin; left: 0; padding: 0 0 6px 0; }"
+        )
 
         # 工作表名称
         sheet_label = QLabel(self.sheet_name)
+        sheet_label.setWordWrap(True)
         sheet_label.setStyleSheet("font-weight: bold; color: #2E86AB;")
+        sheet_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         info_layout.addRow("工作表名称:", sheet_label)
 
         # 建议分类
         suggestion_label = QLabel(self.auto_classification)
+        suggestion_label.setWordWrap(True)
         suggestion_label.setStyleSheet("font-weight: bold; color: #F24236;")
         info_layout.addRow("系统建议:", suggestion_label)
 
@@ -5255,6 +7220,12 @@ class SheetClassificationConfirmDialog(QDialog):
         # 分类选择
         classification_group = QGroupBox("请选择正确的分类")
         classification_layout = QVBoxLayout(classification_group)
+        classification_layout.setContentsMargins(16, 12, 16, 12)
+        classification_layout.setSpacing(10)
+        classification_group.setStyleSheet(
+            "QGroupBox { border: none; font-weight: bold; margin-top: 8px; }"
+            "QGroupBox::title { subcontrol-origin: margin; left: 0; padding: 0 0 6px 0; }"
+        )
 
         # 选项说明
         help_label = QLabel(
@@ -5262,7 +7233,8 @@ class SheetClassificationConfirmDialog(QDialog):
             "• 数据来源表：提供源数据的参考表格\n"
             "• 跳过：既不是快报表也不是数据来源表"
         )
-        help_label.setStyleSheet("color: #666; font-size: 12px; margin: 5px;")
+        help_label.setWordWrap(True)
+        help_label.setStyleSheet("color: #666; font-size: 12px; margin: 0px;")
         classification_layout.addWidget(help_label)
 
         # 单选按钮
@@ -5271,17 +7243,20 @@ class SheetClassificationConfirmDialog(QDialog):
         self.button_group = QButtonGroup()
 
         self.flash_report_radio = QRadioButton("[表] 快报表（要填写的表）")
-        self.flash_report_radio.setStyleSheet("font-size: 14px; padding: 5px;")
+        self.flash_report_radio.setStyleSheet("font-size: 14px; padding: 6px 4px;")
+        self.flash_report_radio.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.button_group.addButton(self.flash_report_radio, 1)
         classification_layout.addWidget(self.flash_report_radio)
 
         self.data_source_radio = QRadioButton("[数据] 数据来源表")
-        self.data_source_radio.setStyleSheet("font-size: 14px; padding: 5px;")
+        self.data_source_radio.setStyleSheet("font-size: 14px; padding: 6px 4px;")
+        self.data_source_radio.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.button_group.addButton(self.data_source_radio, 2)
         classification_layout.addWidget(self.data_source_radio)
 
         self.skip_radio = QRadioButton("[跳过] 跳过此表（不进行处理）")
-        self.skip_radio.setStyleSheet("font-size: 14px; padding: 5px;")
+        self.skip_radio.setStyleSheet("font-size: 14px; padding: 6px 4px;")
+        self.skip_radio.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.button_group.addButton(self.skip_radio, 3)
         classification_layout.addWidget(self.skip_radio)
 
@@ -5295,10 +7270,13 @@ class SheetClassificationConfirmDialog(QDialog):
 
         # 按钮区域
         button_layout = QHBoxLayout()
+        button_layout.setContentsMargins(0, 8, 0, 0)
+        button_layout.setSpacing(12)
 
         # 全部使用建议按钮
         self.auto_all_btn = QPushButton("[AI] 全部使用系统建议")
         self.auto_all_btn.setToolTip("对所有剩余工作表都使用系统建议，不再询问")
+        self.auto_all_btn.setMinimumHeight(32)
         self.auto_all_btn.clicked.connect(self.auto_classify_all)
         button_layout.addWidget(self.auto_all_btn)
 
@@ -5307,11 +7285,13 @@ class SheetClassificationConfirmDialog(QDialog):
         # 确认按钮
         self.confirm_btn = QPushButton("[OK] 确认")
         self.confirm_btn.setDefault(True)
+        self.confirm_btn.setMinimumHeight(34)
         self.confirm_btn.clicked.connect(self.confirm_classification)
         button_layout.addWidget(self.confirm_btn)
 
         # 取消按钮
         self.cancel_btn = QPushButton("[X] 取消")
+        self.cancel_btn.setMinimumHeight(34)
         self.cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(self.cancel_btn)
 

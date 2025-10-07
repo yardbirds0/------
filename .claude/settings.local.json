@@ -16,7 +16,11 @@
       "mcp__serena__get_current_config",
       "mcp__serena__activate_project",
       "mcp__serena__get_symbols_overview",
-      "mcp__serena__find_symbol"
+      "mcp__serena__find_symbol",
+      "Bash(Remove-Item \"d:\\Code\\快报填写程序-修改UI前(2)\\utils\\excel_utils.py\" -Force)",
+      "Bash(python:*)",
+      "Bash([Console]::OutputEncoding = [System.Text.Encoding]::UTF8)",
+      "Bash(powershell:*)"
     ],
     "deny": [],
     "ask": []

@@ -9,8 +9,10 @@ from PySide6.QtCore import QAbstractItemModel, QModelIndex, Qt, Signal
 from PySide6.QtGui import QStandardItemModel, QStandardItem, QIcon, QFont, QColor
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget, QTableWidgetItem,
-    QPushButton, QComboBox, QWidget, QMessageBox
+    QPushButton, QComboBox, QWidget, QMessageBox, QHeaderView
 )
+
+from components.advanced_widgets import ensure_interactive_header, ensure_word_wrap, schedule_row_resize
 
 from models.data_models import WorkbookManager, SheetType
 
@@ -258,9 +260,23 @@ class SheetClassificationDialog(QDialog):
         self.table = QTableWidget()
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["工作表名", "当前分类", "建议分类", "操作"])
-        self.table.horizontalHeader().setStretchLastSection(True)
+        ensure_interactive_header(self.table.horizontalHeader(), stretch_last=True)
+        ensure_word_wrap(self.table)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        # 添加网格线样式
+        self.table.setStyleSheet("""
+            QTableWidget {
+                gridline-color: #d0d0d0;
+                border: 1px solid #dee2e6;
+                border-radius: 4px;
+            }
+            QTableWidget::item {
+                padding: 4px;
+                border: none;
+            }
+        """)
+        self.table.setShowGrid(True)  # 确保显示网格线
 
         # 填充表格数据
         self.populate_table()
@@ -351,6 +367,12 @@ class SheetClassificationDialog(QDialog):
 
         # 调整列宽
         self.table.resizeColumnsToContents()
+        header = self.table.horizontalHeader()
+        ensure_interactive_header(header, stretch_last=True)
+        for column in range(self.table.columnCount()):
+            header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+            self.table.resizeColumnToContents(column)
+            header.setSectionResizeMode(column, QHeaderView.Interactive)
 
     def get_current_classification(self, sheet_name: str) -> SheetType:
         """获取当前分类"""

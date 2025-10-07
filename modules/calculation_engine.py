@@ -16,10 +16,16 @@ from models.data_models import (
     TargetItem, SourceItem, MappingFormula, WorkbookManager,
     FormulaStatus, CalculationResult
 )
-from utils.excel_utils_v2 import (
+from utils.excel_utils import (
     validate_formula_syntax_v2, parse_formula_references_v2,
     build_formula_reference_v2, evaluate_formula_with_values_v2,
-    write_values_to_excel, backup_excel_file
+    write_values_to_excel, backup_excel_file,
+    # 三段式引用函数
+    parse_formula_references_three_segment,
+    build_formula_reference_three_segment,
+    validate_formula_syntax_three_segment,
+    evaluate_formula_with_values_three_segment,
+    parse_formula_smart
 )
 
 
@@ -54,7 +60,10 @@ class CalculationEngine:
 
     def build_value_map(self) -> Dict[str, Any]:
         """
-        构建引用值映射表
+        构建引用值映射表 - 支持三段式引用
+
+        三段式引用格式: [工作表名]![项目名]![列名]
+        同时兼容旧格式以保证向后兼容性
 
         Returns:
             Dict[str, Any]: {引用字符串: 值}
@@ -62,10 +71,26 @@ class CalculationEngine:
         value_map = {}
 
         for source_id, source in self.workbook_manager.source_items.items():
-            # 为每个来源项创建引用
+            # 三段式引用: 为每个来源项的每个列创建引用
+            if hasattr(source, 'values') and isinstance(source.values, dict):
+                for column_name, value in source.values.items():
+                    if value is not None:
+                        # 构建三段式引用
+                        reference = build_formula_reference_three_segment(
+                            source.sheet_name,
+                            source.name,
+                            column_name
+                        )
+                        value_map[reference] = value
+
+            # 兼容旧格式: 使用默认值
             if source.value is not None:
-                reference = build_formula_reference_v2(source.sheet_name, source.name, source.cell_address)
-                value_map[reference] = source.value
+                old_reference = build_formula_reference_v2(
+                    source.sheet_name,
+                    source.name,
+                    source.cell_address
+                )
+                value_map[old_reference] = source.value
 
         return value_map
 
@@ -76,17 +101,20 @@ class CalculationEngine:
         Returns:
             Dict[str, Tuple[bool, Optional[str]]]: {target_id: (是否有效, 错误信息)}
         """
-        results = {}
+        results: Dict[str, Dict[str, Tuple[bool, Optional[str]]]] = {}
 
-        for target_id, formula in self.workbook_manager.mapping_formulas.items():
-            is_valid, error_msg = validate_formula_syntax_v2(formula.formula)
-            results[target_id] = (is_valid, error_msg)
+        for target_id, column_map in self.workbook_manager.mapping_formulas.items():
+            target_results: Dict[str, Tuple[bool, Optional[str]]] = {}
+            for column_key, formula in column_map.items():
+                is_valid, error_msg = validate_formula_syntax_three_segment(formula.formula, self.workbook_manager)
+                target_results[column_key] = (is_valid, error_msg)
 
-            # 更新公式状态
-            if is_valid:
-                formula.status = FormulaStatus.VALIDATED
-            else:
-                formula.status = FormulaStatus.ERROR
+                if is_valid:
+                    formula.status = FormulaStatus.VALIDATED
+                else:
+                    formula.status = FormulaStatus.ERROR
+
+            results[target_id] = target_results
 
         return results
 
@@ -103,11 +131,16 @@ class CalculationEngine:
             CalculationResult: 计算结果
         """
         try:
-            # 验证公式
-            is_valid, error_msg = validate_formula_syntax_v2(formula_obj.formula)
+            column_key = formula_obj.column_key or "__default__"
+            column_name = formula_obj.column_name or ""
+
+            # 验证公式（支持三段式）
+            is_valid, error_msg = validate_formula_syntax_three_segment(formula_obj.formula, self.workbook_manager)
             if not is_valid:
                 return CalculationResult(
                     target_id=target_id,
+                    column_key=column_key,
+                    column_name=column_name,
                     success=False,
                     error_message=error_msg,
                     calculation_time=0.0
@@ -117,11 +150,11 @@ class CalculationEngine:
             if not self.calculation_context.value_cache:
                 self.calculation_context.value_cache = self.build_value_map()
 
-            # 计算公式
+            # 计算公式（支持三段式）
             start_time = datetime.now()
-            success, result = evaluate_formula_with_values_v2(
+            success, result = evaluate_formula_with_values_three_segment(
                 formula_obj.formula,
-                self.calculation_context.value_cache
+                self.workbook_manager.source_items
             )
             end_time = datetime.now()
 
@@ -135,6 +168,8 @@ class CalculationEngine:
 
                 return CalculationResult(
                     target_id=target_id,
+                    column_key=column_key,
+                    column_name=column_name,
                     success=True,
                     result=result,
                     calculation_time=calculation_time
@@ -142,6 +177,8 @@ class CalculationEngine:
             else:
                 return CalculationResult(
                     target_id=target_id,
+                    column_key=column_key,
+                    column_name=column_name,
                     success=False,
                     error_message=str(result),
                     calculation_time=calculation_time
@@ -150,6 +187,8 @@ class CalculationEngine:
         except Exception as e:
             return CalculationResult(
                 target_id=target_id,
+                column_key=formula_obj.column_key or "__default__",
+                column_name=formula_obj.column_name or "",
                 success=False,
                 error_message=f"计算异常: {str(e)}",
                 calculation_time=0.0
@@ -170,7 +209,7 @@ class CalculationEngine:
         self.calculation_context.warnings.clear()
 
         # 重置统计
-        self.total_formulas = len(self.workbook_manager.mapping_formulas)
+        self.total_formulas = sum(len(column_map) for column_map in self.workbook_manager.mapping_formulas.values())
         self.successful_calculations = 0
         self.failed_calculations = 0
 
@@ -179,23 +218,27 @@ class CalculationEngine:
         if show_progress:
             print(f"开始计算 {self.total_formulas} 个公式...")
 
-        for i, (target_id, formula) in enumerate(self.workbook_manager.mapping_formulas.items()):
-            if show_progress and (i + 1) % 10 == 0:
-                print(f"进度: {i + 1}/{self.total_formulas}")
+        processed = 0
+        for target_id, column_map in self.workbook_manager.mapping_formulas.items():
+            for column_key, formula in column_map.items():
+                processed += 1
+                if show_progress and processed % 10 == 0:
+                    print(f"进度: {processed}/{self.total_formulas}")
 
-            result = self.calculate_single_formula(target_id, formula)
-            results.append(result)
+                result = self.calculate_single_formula(target_id, formula)
+                results.append(result)
 
-            # 将计算结果存储到workbook_manager中
-            self.workbook_manager.calculation_results[target_id] = result
+                # 将计算结果存储到workbook_manager中
+                target_results = self.workbook_manager.calculation_results.setdefault(target_id, {})
+                target_results[column_key] = result
 
-            if result.success:
-                self.successful_calculations += 1
-            else:
-                self.failed_calculations += 1
-                self.calculation_context.errors.append(
-                    f"目标项 {target_id}: {result.error_message}"
-                )
+                if result.success:
+                    self.successful_calculations += 1
+                else:
+                    self.failed_calculations += 1
+                    self.calculation_context.errors.append(
+                        f"目标项 {target_id}.{column_key}: {result.error_message}"
+                    )
 
         end_time = datetime.now()
         self.calculation_time = (end_time - start_time).total_seconds()
@@ -241,7 +284,7 @@ class CalculationEngine:
                     "timestamp": datetime.now().isoformat(),
                     "total_targets": len(self.workbook_manager.target_items),
                     "total_sources": len(self.workbook_manager.source_items),
-                    "total_formulas": len(self.workbook_manager.mapping_formulas)
+                    "total_formulas": sum(len(m) for m in self.workbook_manager.mapping_formulas.values())
                 },
                 "calculation_summary": self.get_calculation_summary(),
                 "results": []
@@ -259,21 +302,28 @@ class CalculationEngine:
                 }
 
                 # 添加公式信息
-                if target_id in self.workbook_manager.mapping_formulas:
-                    formula = self.workbook_manager.mapping_formulas[target_id]
-                    result_data.update({
+                columns_payload: List[Dict[str, Any]] = []
+                formula_map = self.workbook_manager.mapping_formulas.get(target_id, {})
+                result_map = self.workbook_manager.calculation_results.get(target_id, {})
+
+                for column_key, formula in formula_map.items():
+                    column_result = result_map.get(column_key)
+                    columns_payload.append({
+                        "column_key": column_key,
+                        "column_name": formula.column_name,
                         "formula": formula.formula,
-                        "formula_status": formula.status.value,
-                        "calculation_result": formula.calculation_result,
-                        "last_calculated": formula.last_calculated.isoformat() if formula.last_calculated else None
+                        "constant_value": formula.constant_value,
+                        "status": formula.status.value,
+                        "calculation_result": column_result.result if column_result else None,
+                        "success": column_result.success if column_result else False,
+                        "error_message": column_result.error_message if column_result else "",
+                        "last_calculated": (
+                            column_result.calculated_time.isoformat()
+                            if column_result and column_result.calculated_time else None
+                        )
                     })
-                else:
-                    result_data.update({
-                        "formula": "",
-                        "formula_status": "empty",
-                        "calculation_result": None,
-                        "last_calculated": None
-                    })
+
+                result_data["columns"] = columns_payload
 
                 export_data["results"].append(result_data)
 
@@ -488,8 +538,8 @@ class CalculationEngine:
                 "current_status": formula.status.value
             }
 
-            # 尝试计算
-            success, result = evaluate_formula_with_values_v2(formula.formula, value_map)
+            # 尝试计算（支持三段式）
+            success, result = evaluate_formula_with_values_three_segment(formula.formula, self.workbook_manager.source_items)
 
             if success:
                 preview_data["preview_result"] = result
@@ -533,8 +583,8 @@ class CalculationEngine:
         try:
             start_time = datetime.now()
 
-            # 1. 验证公式语法
-            is_valid, validation_error = validate_formula_syntax_v2(formula_text)
+            # 1. 验证公式语法（支持三段式）
+            is_valid, validation_error = validate_formula_syntax_three_segment(formula_text, self.workbook_manager)
             result["validation"]["is_valid"] = is_valid
             result["validation"]["error_message"] = validation_error
 
@@ -542,9 +592,9 @@ class CalculationEngine:
                 result["error"] = f"语法错误: {validation_error}"
                 return result
 
-            # 2. 解析公式引用
+            # 2. 解析公式引用（支持三段式）
             try:
-                references = parse_formula_references_v2(formula_text)
+                references = parse_formula_references_three_segment(formula_text)
                 result["references"] = references
             except Exception as e:
                 result["error"] = f"引用解析错误: {str(e)}"
@@ -556,8 +606,8 @@ class CalculationEngine:
 
             value_map = self.calculation_context.value_cache
 
-            # 4. 计算公式
-            success, calc_result = evaluate_formula_with_values_v2(formula_text, value_map)
+            # 4. 计算公式（支持三段式）
+            success, calc_result = evaluate_formula_with_values_three_segment(formula_text, self.workbook_manager.source_items)
 
             if success:
                 result["success"] = True
@@ -606,8 +656,8 @@ class CalculationEngine:
             formula_obj.formula = formula_text
 
             if auto_validate and formula_text.strip():
-                # 3. 自动验证
-                is_valid, error_msg = validate_formula_syntax_v2(formula_text)
+                # 3. 自动验证（支持三段式）
+                is_valid, error_msg = validate_formula_syntax_three_segment(formula_text, self.workbook_manager)
 
                 if is_valid:
                     formula_obj.status = FormulaStatus.VALID

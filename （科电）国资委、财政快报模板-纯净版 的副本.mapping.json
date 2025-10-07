@@ -1,0 +1,106 @@
+{
+  "excel_path": "D:/Code/快报填写程序/（科电）国资委、财政快报模板-纯净版 的副本.xlsx",
+  "saved_at": "2025-10-07T15:59:49.444433",
+  "mapping_formulas": [
+    {
+      "target_id": "财政局-快报_2",
+      "column_key": "行次",
+      "column_name": "行次",
+      "formula": "",
+      "constant_value": null,
+      "status": "empty",
+      "notes": ""
+    },
+    {
+      "target_id": "财政局-快报_2",
+      "column_key": "本月数",
+      "column_name": "本月数",
+      "formula": "[上年科目余额表]![银行存款]![年初余额_借方]+ [上年科目余额表]![银行存款]![期初余额_借方]",
+      "constant_value": null,
+      "status": "calculated",
+      "notes": ""
+    },
+    {
+      "target_id": "财政局-快报_2",
+      "column_key": "本年累计",
+      "column_name": "本年累计",
+      "formula": "[上年科目余额表]![银行存款　_交通银行]![年初余额_借方]+ [上年科目余额表]![银行存款　_交通银行]![期初余额_借方]",
+      "constant_value": null,
+      "status": "calculated",
+      "notes": ""
+    },
+    {
+      "target_id": "财政局-快报_2",
+      "column_key": "上年同期",
+      "column_name": "上年同期",
+      "formula": "[上年科目余额表]![银行存款　_交通银行]![期初余额_借方]+ [上年科目余额表]![银行存款　_交通银行]![本期发生额_借方]",
+      "constant_value": null,
+      "status": "calculated",
+      "notes": ""
+    },
+    {
+      "target_id": "企业财务快报利润因素分析表_45",
+      "column_key": "指标名称",
+      "column_name": "指标名称",
+      "formula": "",
+      "constant_value": null,
+      "status": "empty",
+      "notes": ""
+    },
+    {
+      "target_id": "企业财务快报利润因素分析表_44",
+      "column_key": "指标名称",
+      "column_name": "指标名称",
+      "formula": "",
+      "constant_value": null,
+      "status": "empty",
+      "notes": ""
+    },
+    {
+      "target_id": "企业财务快报利润因素分析表_3",
+      "column_key": "指标名称",
+      "column_name": "指标名称",
+      "formula": "",
+      "constant_value": null,
+      "status": "empty",
+      "notes": ""
+    },
+    {
+      "target_id": "企业财务快报利润因素分析表_3",
+      "column_key": "金额",
+      "column_name": "金额",
+      "formula": "",
+      "constant_value": null,
+      "status": "empty",
+      "notes": ""
+    },
+    {
+      "target_id": "企业财务快报利润因素分析表_2",
+      "column_key": "指标名称",
+      "column_name": "指标名称",
+      "formula": "",
+      "constant_value": null,
+      "status": "empty",
+      "notes": ""
+    },
+    {
+      "target_id": "企业财务快报利润因素分析表_6",
+      "column_key": "指标名称",
+      "column_name": "指标名称",
+      "formula": "",
+      "constant_value": null,
+      "status": "empty",
+      "notes": ""
+    },
+    {
+      "target_id": "企业财务快报利润因素分析表_5",
+      "column_key": "指标名称",
+      "column_name": "指标名称",
+      "formula": "",
+      "constant_value": null,
+      "status": "empty",
+      "notes": ""
+    }
+  ],
+  "column_configs": {}
+}

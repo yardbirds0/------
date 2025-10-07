@@ -5,6 +5,7 @@
 """
 
 import re
+import unicodedata
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
 from enum import Enum
@@ -28,12 +29,28 @@ class ColumnInfo:
     secondary_header: str = ""  # 二级列头
     data_type: str = "unknown"  # 数据类型：debit, credit, amount, text
     is_numeric: bool = False  # 是否为数值列
+    normalized_key: str = ""  # 规范化键名（用于数据字典）
+    display_name: str = ""  # 展示名称
+    header_text: str = ""  # 完整列头文本
+    is_data_column: bool = False  # 是否判定为数据列
+    is_placeholder: bool = False  # 是否为占位列头
+    primary_col_span: int = 1  # 一级列头横向跨度
+    primary_row_span: int = 1  # 一级列头纵向跨度
+    primary_is_group_start: bool = True  # 是否为一级列头合并块起始列
+    primary_start_column: int = 0  # 一级列头合并块起始列索引
+    primary_merge_key: Optional[Tuple[int, int, int, int]] = None  # 一级列头合并标识
+    secondary_col_span: int = 1  # 二级列头横向跨度
+    secondary_row_span: int = 1  # 二级列头纵向跨度
+    secondary_is_group_start: bool = True  # 是否为二级列头合并块起始列
+    secondary_start_column: int = 0  # 二级列头合并块起始列索引
+    secondary_merge_key: Optional[Tuple[int, int, int, int]] = None  # 二级列头合并标识
 
 @dataclass
 class TableSchema:
     """表格模式"""
     table_type: TableType
     header_rows: int  # 列头行数
+    header_start_row: int  # 列头起始行
     data_start_row: int  # 数据开始行
     name_columns: List[int]  # 项目名称列
     code_columns: List[int]  # 编码列
@@ -76,6 +93,126 @@ class TableSchemaAnalyzer:
             'balance': [r'余额', r'balance']
         }
 
+        # 列头识别关键词
+        self.header_keywords = [
+            '项目', '科目', '指标', '名称', '内容', '行次', '行号', '序号',
+            '金 额', '金额', '本期', '本月', '本年', '累计', '上期', '上年', '期末',
+            '期初', '余额', '借方', '贷方', '备注', '数量', '单价', '本季', '科目代码'
+        ]
+
+        self.header_meta_keywords = [
+            '编制单位', '填报单位', '金额单位', '单位：', '单位:', '单位（', '单位(',
+            '制表', '审核', '复核', '主管', '负责人', '联系电话', '联系人', '报出',
+            '填报', '年月日', '年 月 日', '日期', '财务负责人', '公司', '集团', '部门'
+        ]
+
+        self.header_description_patterns = [
+            r'编制单位', r'填报单位', r'单位[:：]', r'金额单位', r'日期', r'年\s*月',
+            r'表$', r'^备注', r'^说明', r'公司', r'集团', r'部门', r'负责人', r'审核',
+            r'复核', r'主管', r'报出', r'联系电话', r'联系人', r'制表', r'填报',
+            r'财务负责人', r'^\s*单位\s*$', r'^\s*联系方式\s*$'
+        ]
+
+    def _clean_header_value(self, value: Any) -> str:
+        """清洗列头文本，移除多余空格与全角字符"""
+        if value is None:
+            return ""
+
+        if isinstance(value, str):
+            text = value
+        else:
+            text = str(value)
+
+        text = unicodedata.normalize("NFKC", text)
+        text = text.replace('\u3000', ' ').replace('\xa0', ' ')
+        text = re.sub(r'\s+', ' ', text)
+        return text.strip()
+
+    def _is_placeholder_text(self, text: str) -> bool:
+        """判定列头文本是否为空或占位符"""
+        if not text:
+            return True
+
+        stripped = text.strip()
+        if not stripped:
+            return True
+
+        # 去除常见占位符字符后若为空则视为占位
+        normalized = re.sub(r'[\-_=~/\\·\.\s—–]+', '', stripped)
+        if not normalized:
+            return True
+
+        # 单一重复字符
+        if len(set(stripped)) == 1 and stripped[0] in '-_=~•·.。*#/\\|':
+            return True
+
+        return False
+
+    def _is_noise_cell_text(self, text: str) -> bool:
+        """判定单元格文本是否缺乏有效信息"""
+        if not text:
+            return True
+
+        stripped = text.strip()
+        if not stripped:
+            return True
+
+        if re.fullmatch(r'[\-_=~/\\·\.·\s—–\|]+', stripped):
+            return True
+
+        # 缺少字母或汉字且长度极短
+        if len(stripped) <= 2 and not re.search(r'[A-Za-z0-9\u4e00-\u9fff]', stripped):
+            return True
+
+        return False
+
+    def _contains_meta_keyword(self, text: str) -> bool:
+        """检测文本是否包含说明性关键词"""
+        if not text:
+            return False
+
+        lower = text.lower()
+        if any(keyword.lower() in lower for keyword in self.header_meta_keywords):
+            return True
+
+        return any(re.search(pattern, text) for pattern in self.header_description_patterns)
+
+    def _looks_like_data_row(self, sheet: Worksheet, row: int, header_start_row: int) -> bool:
+        """
+        判断指定行是否像数据行而不是列头
+
+        检查指标：
+        1. 第一列是否包含数字开头的项目名（如"1."、"一、"）
+        2. 单元格内容是否过长（超过20字符）
+        3. 是否包含明显的数据行特征
+        """
+        max_columns = min(10, sheet.max_column or 0)
+
+        # 检查前几列的内容
+        for col in range(1, max_columns + 1):
+            cell = sheet.cell(row=row, column=col)
+            value = cell.value
+            if value is None:
+                continue
+
+            text = self._clean_header_value(value)
+            if not text:
+                continue
+
+            # 检查1：是否为数字开头的项目名称（如"1.营业总收入"、"一、资产类"）
+            if re.match(r'^[\d一二三四五六七八九十]+[.、）\)]', text):
+                return True
+
+            # 检查2：内容是否过长（列头通常较短）
+            if len(text) > 25:
+                return True
+
+            # 检查3：包含"总计"、"合计"等汇总词（通常在数据行）
+            if re.search(r'总计|合计|小计|总额|合计数', text):
+                return True
+
+        return False
+
     def analyze_table_schema(self, sheet: Worksheet) -> TableSchema:
         """分析表格模式"""
         # 识别表格类型
@@ -88,14 +225,15 @@ class TableSchemaAnalyzer:
         data_columns = self._identify_data_columns(sheet, header_info)
 
         # 识别名称和编码列
-        name_columns, code_columns = self._identify_name_code_columns(sheet, table_type)
+        name_columns, code_columns = self._identify_name_code_columns(sheet, table_type, header_info)
 
         # 确定数据开始行
-        data_start_row = self._find_data_start_row(sheet, header_info['header_rows'])
+        data_start_row = self._find_data_start_row(sheet, header_info)
 
         return TableSchema(
             table_type=table_type,
             header_rows=header_info['header_rows'],
+            header_start_row=header_info['header_start_row'],
             data_start_row=data_start_row,
             name_columns=name_columns,
             code_columns=code_columns,
@@ -127,61 +265,339 @@ class TableSchemaAnalyzer:
         return TableType.UNKNOWN
 
     def _analyze_headers(self, sheet: Worksheet) -> Dict[str, Any]:
-        """分析列头结构"""
+        """分析列头结构，自动跳过前置说明行"""
+        max_row = sheet.max_row or 0
+        if max_row == 0:
+            return {
+                'header_rows': 1,
+                'header_start_row': 1,
+                'has_merged_cells': False
+            }
+
+        max_scan_rows = min(12, max_row)
+        row_metrics: List[Dict[str, Any]] = []
+
+        for row in range(1, max_scan_rows + 1):
+            metrics = self._evaluate_header_row(sheet, row)
+            row_metrics.append(metrics)
+
+        header_start_row = 1
         header_rows = 1
-        max_scan_rows = min(5, sheet.max_row)
 
-        # 寻找列头结束位置（开始出现数值或明显的数据行）
-        for row in range(2, max_scan_rows + 1):
-            numeric_count = 0
-            total_cells = 0
+        header_candidates = [m for m in row_metrics if m.get('is_header')]
+        selected_metrics: Optional[Dict[str, Any]] = None
 
-            for col in range(1, min(16, sheet.max_column + 1)):
-                cell = sheet.cell(row=row, column=col)
-                if cell.value is not None:
-                    total_cells += 1
-                    if isinstance(cell.value, (int, float)) or self._is_numeric_string(cell.value):
-                        numeric_count += 1
+        if header_candidates:
+            selected_metrics = min(
+                header_candidates,
+                key=lambda m: m.get('row', 1)
+            )
+        else:
+            fallback_candidates = [m for m in row_metrics if not m.get('is_description')]
+            if fallback_candidates:
+                selected_metrics = max(
+                    fallback_candidates,
+                    key=lambda m: (m.get('header_score', 0), -m.get('row', 0))
+                )
 
-            # 如果数值比例超过30%，认为是数据行
-            if total_cells > 0 and (numeric_count / total_cells) > 0.3:
-                break
-            else:
-                header_rows = row
+        if not selected_metrics and row_metrics:
+            selected_metrics = row_metrics[0]
+
+        if selected_metrics:
+            header_start_row = selected_metrics.get('row', 1)
+            header_rows = 1
+
+            expected_row = header_start_row + 1
+            for follow in row_metrics:
+                if follow['row'] < expected_row:
+                    continue
+                if follow.get('is_description'):
+                    continue
+
+                if follow['row'] != expected_row:
+                    break
+
+                # 🔧 增强鲁棒性：如果紧跟列头的行只有很少的非空单元格（<=2个），
+                # 很可能是数据行的开始，不应该被计入列头
+                if follow.get('non_empty', 0) <= 2:
+                    break
+
+                # 🔧 新增：检查是否为数据行开始
+                if self._looks_like_data_row(sheet, expected_row, header_start_row):
+                    break
+
+                if follow.get('is_header_continuation') or follow.get('is_header'):
+                    header_rows += 1
+                    expected_row += 1
+                else:
+                    break
 
         return {
             'header_rows': header_rows,
-            'has_merged_cells': self._check_merged_cells(sheet, header_rows)
+            'header_start_row': header_start_row,
+            'has_merged_cells': self._check_merged_cells(sheet, header_start_row, header_rows)
+        }
+
+    def _evaluate_header_row(self, sheet: Worksheet, row: int) -> Dict[str, Any]:
+        max_columns = min(20, sheet.max_column or 0)
+        non_empty = 0
+        numeric_cells = 0
+        keyword_hits = 0
+        description_hits = 0
+        meta_hits = 0
+        noise_cells = 0
+        short_text_count = 0
+        unique_texts: set = set()
+
+        for col in range(1, max_columns + 1):
+            cell = sheet.cell(row=row, column=col)
+            value = cell.value
+            if value is None:
+                continue
+
+            text = self._clean_header_value(value)
+            if not text:
+                continue
+
+            non_empty += 1
+            unique_texts.add(text)
+
+            lower = text.lower()
+            if any(keyword.lower() in lower for keyword in self.header_keywords):
+                keyword_hits += 1
+
+            if any(re.search(pattern, text) for pattern in self.header_description_patterns):
+                description_hits += 1
+
+            if self._contains_meta_keyword(text):
+                meta_hits += 1
+
+            if self._is_noise_cell_text(text):
+                noise_cells += 1
+
+            if isinstance(value, (int, float)) or self._is_numeric_string(value):
+                numeric_cells += 1
+            elif self._is_numeric_string(text):
+                numeric_cells += 1
+
+            if len(text) <= 8:
+                short_text_count += 1
+
+        numeric_ratio = (numeric_cells / non_empty) if non_empty else 0.0
+        short_ratio = (short_text_count / non_empty) if non_empty else 0.0
+        has_keywords = keyword_hits > 0
+        meta_ratio = (meta_hits / non_empty) if non_empty else 0.0
+        noise_ratio = (noise_cells / non_empty) if non_empty else 0.0
+        is_description = (
+            non_empty == 0
+            or (meta_hits >= 1 and meta_ratio >= 0.5)
+            or (meta_hits >= 2 and keyword_hits == 0)
+            or (description_hits > 0 and keyword_hits == 0 and non_empty <= 4)
+            or noise_ratio >= 0.6
+        )
+        is_data_row = non_empty > 0 and numeric_ratio >= 0.5 and not has_keywords
+
+        is_header = (
+            non_empty >= 2
+            and not is_description
+            and not is_data_row
+            and (
+                has_keywords
+                or (short_ratio >= 0.6 and len(unique_texts) >= 2)
+            )
+        )
+
+        # 紧跟在表头之后的描述性行（如“单位：元”）不算在列头行内
+        is_header_continuation = (
+            not is_header
+            and not is_description
+            and not is_data_row
+            and non_empty >= 1
+            and (short_ratio >= 0.5 or keyword_hits >= 1)
+        )
+
+        return {
+            'row': row,
+            'non_empty': non_empty,
+            'is_header': is_header,
+            'is_header_continuation': is_header_continuation,
+            'numeric_ratio': numeric_ratio,
+            'keyword_hits': keyword_hits,
+            'description_hits': description_hits,
+            'meta_hits': meta_hits,
+            'noise_ratio': noise_ratio,
+            'is_description': is_description,
+            'header_score': keyword_hits * 2 + non_empty - meta_hits * 1.5 - (5 if is_description else 0)
+        }
+
+    def _build_header_merge_lookup(
+        self,
+        sheet: Worksheet,
+        header_start: int,
+        header_rows: int
+    ) -> Dict[Tuple[int, int], Tuple[int, int, int, int]]:
+        """构建列头区域合并单元格查找表"""
+        lookup: Dict[Tuple[int, int], Tuple[int, int, int, int]] = {}
+        header_end = header_start + header_rows - 1
+
+        for merged in sheet.merged_cells.ranges:
+            if merged.max_row < header_start or merged.min_row > header_end:
+                continue
+
+            min_row, max_row = merged.min_row, merged.max_row
+            min_col, max_col = merged.min_col, merged.max_col
+
+            for row in range(min_row, max_row + 1):
+                if row < header_start or row > header_end:
+                    continue
+                for col in range(min_col, max_col + 1):
+                    lookup[(row, col)] = (min_row, max_row, min_col, max_col)
+
+        return lookup
+
+    def _get_header_cell_info(
+        self,
+        sheet: Worksheet,
+        row: int,
+        col: int,
+        header_start: int,
+        header_rows: int,
+        merged_lookup: Dict[Tuple[int, int], Tuple[int, int, int, int]]
+    ) -> Dict[str, Any]:
+        """获取列头单元格的文本及合并信息"""
+        merge = merged_lookup.get((row, col))
+        header_end = header_start + header_rows - 1
+
+        if merge:
+            min_row, max_row, min_col, max_col = merge
+            base_cell = sheet.cell(row=min_row, column=min_col)
+            text = self._clean_header_value(base_cell.value)
+            effective_min_row = max(min_row, header_start)
+            effective_max_row = min(max_row, header_end)
+            row_span = effective_max_row - effective_min_row + 1
+            col_span = max_col - min_col + 1
+            is_group_start = (col == min_col and row == effective_min_row)
+            start_col = min_col
+            start_row = effective_min_row
+        else:
+            cell = sheet.cell(row=row, column=col)
+            text = self._clean_header_value(cell.value)
+            row_span = 1
+            col_span = 1
+            is_group_start = True
+            start_col = col
+            start_row = row
+            min_row = row
+            max_row = row
+            min_col = col
+            max_col = col
+
+        if self._is_placeholder_text(text):
+            text = ""
+
+        return {
+            'text': text,
+            'row_span': row_span,
+            'col_span': col_span,
+            'is_group_start': is_group_start,
+            'start_col': start_col,
+            'start_row': start_row,
+            'merge_key': (min_row, max_row, min_col, max_col) if merge else None
         }
 
     def _identify_data_columns(self, sheet: Worksheet, header_info: Dict) -> List[ColumnInfo]:
         """识别数据列"""
-        data_columns = []
-        header_rows = header_info['header_rows']
+        data_columns: List[ColumnInfo] = []
+        header_rows = header_info.get('header_rows', 1)
+        header_start = header_info.get('header_start_row', 1)
+        merged_lookup = self._build_header_merge_lookup(sheet, header_start, header_rows) if header_rows >= 1 else {}
 
-        for col in range(1, min(16, sheet.max_column + 1)):
+        max_columns = sheet.max_column or 0
+        for col in range(1, min(16, max_columns + 1)):
             col_letter = openpyxl.utils.get_column_letter(col)
 
-            # 获取列头文本
-            primary_header = ""
-            secondary_header = ""
+            primary_info = {
+                'text': '',
+                'row_span': 1,
+                'col_span': 1,
+                'is_group_start': True,
+                'start_col': col,
+                'start_row': header_start,
+                'merge_key': None
+            }
+            secondary_info = {
+                'text': '',
+                'row_span': 0,
+                'col_span': 1,
+                'is_group_start': True,
+                'start_col': col,
+                'start_row': header_start + 1,
+                'merge_key': None
+            }
 
             if header_rows >= 1:
-                cell1 = sheet.cell(row=1, column=col)
-                if cell1.value:
-                    primary_header = str(cell1.value).strip()
+                primary_info = self._get_header_cell_info(
+                    sheet,
+                    header_start,
+                    col,
+                    header_start,
+                    header_rows,
+                    merged_lookup
+                )
 
+            primary_header = primary_info.get('text', '')
+
+            # 先获取二级列头信息，以便完整判断是否需要保留该列
             if header_rows >= 2:
-                cell2 = sheet.cell(row=2, column=col)
-                if cell2.value:
-                    secondary_header = str(cell2.value).strip()
+                if primary_info.get('row_span', 1) < header_rows:
+                    second_row = header_start + primary_info.get('row_span', 1)
+                    secondary_info = self._get_header_cell_info(
+                        sheet,
+                        second_row,
+                        col,
+                        header_start,
+                        header_rows,
+                        merged_lookup
+                    )
+                else:
+                    secondary_info['row_span'] = max(0, header_rows - primary_info.get('row_span', 1))
+                    secondary_info['start_row'] = primary_info.get('start_row', header_start) + primary_info.get('row_span', 1)
+                secondary_header = secondary_info.get('text', '')
+            else:
+                secondary_header = ""
 
-            # 检查是否为数值列
-            is_numeric = self._check_column_numeric(sheet, col, header_rows + 1)
+            if self._is_placeholder_text(primary_header):
+                primary_header = ""
+            if self._is_placeholder_text(secondary_header):
+                secondary_header = ""
+
+            # 🔧 修复：跳过横跨多列的合并单元格的非起始列，避免重复识别列头
+            # 但如果该列有明确的二级列头文本（如"借方"、"贷方"），则保留，无论是否有数据
+            if not primary_info.get('is_group_start', True):
+                # 如果有明确的二级列头文本，保留该列
+                if secondary_header:
+                    pass  # 保留有二级列头的列
+                else:
+                    # 检查是否有独立的数值数据
+                    data_start_guess = header_start + max(header_rows, 1)
+                    is_numeric_independent = self._check_column_numeric(sheet, col, data_start_guess)
+                    if not is_numeric_independent:
+                        # 如果不是合并单元格起始列、没有二级列头、且没有独立数值数据，跳过
+                        continue
+
+            is_placeholder = not primary_header and not secondary_header
+
+            data_start_guess = header_start + max(header_rows, 1)
+            is_numeric = self._check_column_numeric(sheet, col, data_start_guess)
 
             if is_numeric or primary_header or secondary_header:
-                # 识别数据类型
                 data_type = self._identify_data_type(primary_header, secondary_header)
+
+                normalized_key, display_name = self._build_column_identifiers(
+                    primary_header,
+                    secondary_header,
+                    col_letter
+                )
 
                 column_info = ColumnInfo(
                     column_index=col,
@@ -189,29 +605,111 @@ class TableSchemaAnalyzer:
                     primary_header=primary_header,
                     secondary_header=secondary_header,
                     data_type=data_type,
-                    is_numeric=is_numeric
+                    is_numeric=is_numeric,
+                    normalized_key=normalized_key,
+                    display_name=display_name,
+                    header_text=self._compose_header_text(primary_header, secondary_header, col_letter),
+                    is_data_column=self._determine_is_data_column(is_numeric, data_type, primary_header, secondary_header),
+                    is_placeholder=is_placeholder,
+                    primary_col_span=primary_info.get('col_span', 1),
+                    primary_row_span=primary_info.get('row_span', 1),
+                    primary_is_group_start=primary_info.get('is_group_start', True),
+                    primary_start_column=primary_info.get('start_col', col),
+                    primary_merge_key=primary_info.get('merge_key'),
+                    secondary_col_span=secondary_info.get('col_span', 1),
+                    secondary_row_span=secondary_info.get('row_span', 0),
+                    secondary_is_group_start=secondary_info.get('is_group_start', True),
+                    secondary_start_column=secondary_info.get('start_col', col),
+                    secondary_merge_key=secondary_info.get('merge_key')
                 )
                 data_columns.append(column_info)
 
         return data_columns
 
-    def _identify_name_code_columns(self, sheet: Worksheet, table_type: TableType) -> Tuple[List[int], List[int]]:
+    def _build_column_identifiers(self, primary: str, secondary: str, column_letter: str) -> Tuple[str, str]:
+        """生成列的规范化键名与展示名称"""
+        candidates = []
+        primary_clean = primary.strip() if primary else ""
+        secondary_clean = secondary.strip() if secondary else ""
+
+        if primary_clean and secondary_clean:
+            candidates.append(f"{primary_clean}_{secondary_clean}")
+        if primary_clean:
+            candidates.append(primary_clean)
+        if secondary_clean:
+            candidates.append(secondary_clean)
+
+        for candidate in candidates:
+            normalized = self._sanitize_key(candidate)
+            if normalized:
+                return normalized, candidate
+
+        # 回退使用列字母
+        fallback_key = f"col_{column_letter}"
+        return fallback_key, f"列{column_letter}"
+
+    def _sanitize_key(self, text: str) -> str:
+        """将文本转换为规范化的键名"""
+        if not text:
+            return ""
+
+        cleaned = re.sub(r'\s+', '_', text.strip())
+        cleaned = re.sub(r'[^0-9A-Za-z_\u4e00-\u9fff]+', '_', cleaned)
+        cleaned = re.sub(r'_+', '_', cleaned)
+        cleaned = cleaned.strip('_')
+        return cleaned.lower()
+
+    def _compose_header_text(self, primary: str, secondary: str, column_letter: str) -> str:
+        """组合完整列头文本"""
+        parts = [part.strip() for part in [primary, secondary] if part and part.strip()]
+        if parts:
+            return " / ".join(parts)
+        return f"列{column_letter}"
+
+    def _determine_is_data_column(self, is_numeric: bool, data_type: str, primary: str, secondary: str) -> bool:
+        """根据内容判断是否为数据列"""
+        if is_numeric:
+            return True
+
+        combined = (primary or "") + " " + (secondary or "")
+        combined_lower = combined.lower()
+
+        keyword_patterns = [
+            r'金额', r'余额', r'数值', r'合计', r'本期', r'上期', r'年初', r'期末',
+            r'借方', r'贷方', r'累计', r'发生'
+        ]
+
+        if any(re.search(pattern, combined_lower) for pattern in keyword_patterns):
+            return True
+
+        return data_type in {"debit", "credit", "amount", "balance", "current", "previous", "ending", "beginning"}
+
+    def _identify_name_code_columns(
+        self,
+        sheet: Worksheet,
+        table_type: TableType,
+        header_info: Dict[str, Any]
+    ) -> Tuple[List[int], List[int]]:
         """识别名称列和编码列"""
         name_columns = []
         code_columns = []
+
+        header_start = header_info.get('header_start_row', 1)
+        header_rows = header_info.get('header_rows', 1)
+        data_start_row = header_start + header_rows
 
         # 检查前5列
         for col in range(1, min(6, sheet.max_column + 1)):
             # 获取列头
             header_text = ""
-            for row in range(1, 4):
+            for row in range(header_start, min(header_start + header_rows, sheet.max_row + 1)):
                 cell = sheet.cell(row=row, column=col)
                 if cell.value:
                     header_text += str(cell.value).lower()
 
             # 检查几行数据来判断列的性质
             sample_values = []
-            for row in range(4, min(10, sheet.max_row + 1)):
+            for row in range(data_start_row, min(data_start_row + 6, sheet.max_row + 1)):
                 cell = sheet.cell(row=row, column=col)
                 if cell.value:
                     sample_values.append(str(cell.value).strip())
@@ -305,35 +803,50 @@ class TableSchemaAnalyzer:
         except ValueError:
             return False
 
-    def _check_merged_cells(self, sheet: Worksheet, header_rows: int) -> bool:
-        """检查是否有合并单元格"""
-        for row in range(1, header_rows + 1):
-            for merged_range in sheet.merged_cells.ranges:
-                if merged_range.min_row <= row <= merged_range.max_row:
-                    return True
+    def _check_merged_cells(self, sheet: Worksheet, header_start: int, header_rows: int) -> bool:
+        """检查列头区域是否存在合并单元格"""
+        header_end = header_start + header_rows - 1
+        for merged_range in sheet.merged_cells.ranges:
+            if merged_range.max_row < header_start or merged_range.min_row > header_end:
+                continue
+            return True
         return False
 
-    def _find_data_start_row(self, sheet: Worksheet, header_rows: int) -> int:
+    def _find_data_start_row(self, sheet: Worksheet, header_info: Dict[str, Any]) -> int:
         """寻找数据开始行"""
-        # 从列头后一行开始寻找
-        for row in range(header_rows + 1, min(header_rows + 5, sheet.max_row + 1)):
-            # 检查这一行是否有有效数据
+        header_start = header_info.get('header_start_row', 1)
+        header_rows = header_info.get('header_rows', 1)
+        candidate_start = header_start + header_rows
+        max_row = sheet.max_row or candidate_start
+
+        for row in range(candidate_start, min(candidate_start + 8, max_row + 1)):
+            row_metrics = self._evaluate_header_row(sheet, row)
+            if row_metrics.get('non_empty', 0) == 0:
+                continue
+            if row_metrics.get('is_description'):
+                continue
+
             has_name = False
             has_number = False
 
-            for col in range(1, min(6, sheet.max_column + 1)):
+            for col in range(1, min(8, sheet.max_column + 1)):
                 cell = sheet.cell(row=row, column=col)
-                if cell.value:
-                    value_str = str(cell.value).strip()
-                    if re.search(r'[\u4e00-\u9fff]', value_str):  # 包含中文
-                        has_name = True
-                    elif isinstance(cell.value, (int, float)) or self._is_numeric_string(value_str):
-                        has_number = True
+                value = cell.value
+                if value is None:
+                    continue
+                value_str = str(value).strip()
+                if not value_str:
+                    continue
+
+                if re.search(r'[\u4e00-\u9fff]', value_str) and not self._is_numeric_string(value_str):
+                    has_name = True
+                if isinstance(value, (int, float)) or self._is_numeric_string(value):
+                    has_number = True
 
             if has_name or has_number:
                 return row
 
-        return header_rows + 1
+        return candidate_start
 
 if __name__ == "__main__":
     # 测试代码

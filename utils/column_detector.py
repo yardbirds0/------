@@ -59,39 +59,57 @@ class ColumnDetector:
             }
         }
 
-    def detect_columns(self, sheet: Worksheet, header_rows: int = 2) -> List[ColumnHeader]:
+    def detect_columns(
+        self,
+        sheet: Worksheet,
+        header_start_row: int = 1,
+        header_rows: int = 2
+    ) -> List[ColumnHeader]:
         """检测所有列头"""
         columns = []
 
         # 处理合并单元格
-        merged_ranges = self._get_merged_ranges(sheet, header_rows)
+        merged_ranges = self._get_merged_ranges(sheet, header_start_row, header_rows)
 
         # 分析每一列
         for col in range(1, sheet.max_column + 1):
-            column_header = self._analyze_column(sheet, col, header_rows, merged_ranges)
+            column_header = self._analyze_column(sheet, col, header_start_row, header_rows, merged_ranges)
             if column_header:
                 columns.append(column_header)
 
         return columns
 
-    def _get_merged_ranges(self, sheet: Worksheet, header_rows: int) -> List[Tuple[int, int, int, int]]:
+    def _get_merged_ranges(
+        self,
+        sheet: Worksheet,
+        header_start_row: int,
+        header_rows: int
+    ) -> List[Tuple[int, int, int, int]]:
         """获取列头区域的合并单元格范围"""
         merged_ranges = []
+        header_end_row = header_start_row + header_rows - 1
 
         for merged_range in sheet.merged_cells.ranges:
             # 只关注列头区域的合并单元格
-            if merged_range.min_row <= header_rows:
-                merged_ranges.append((
-                    merged_range.min_row,
-                    merged_range.max_row,
-                    merged_range.min_col,
-                    merged_range.max_col
-                ))
+            if merged_range.max_row < header_start_row or merged_range.min_row > header_end_row:
+                continue
+            merged_ranges.append((
+                merged_range.min_row,
+                merged_range.max_row,
+                merged_range.min_col,
+                merged_range.max_col
+            ))
 
         return merged_ranges
 
-    def _analyze_column(self, sheet: Worksheet, col: int, header_rows: int,
-                       merged_ranges: List[Tuple[int, int, int, int]]) -> Optional[ColumnHeader]:
+    def _analyze_column(
+        self,
+        sheet: Worksheet,
+        col: int,
+        header_start_row: int,
+        header_rows: int,
+        merged_ranges: List[Tuple[int, int, int, int]]
+    ) -> Optional[ColumnHeader]:
         """分析单个列的列头信息"""
         col_letter = openpyxl.utils.get_column_letter(col)
 
@@ -101,28 +119,33 @@ class ColumnDetector:
         merged_range = None
 
         # 检查是否在合并单元格中
+        header_end_row = header_start_row + header_rows - 1
+
         for merge_range in merged_ranges:
             min_row, max_row, min_col, max_col = merge_range
-            if min_col <= col <= max_col:
-                merged_range = merge_range
-                # 从合并单元格的起始位置获取文本
-                cell = sheet.cell(row=min_row, column=min_col)
-                if cell.value:
-                    if min_row == 1:
-                        level1_text = str(cell.value).strip()
-                    elif min_row == 2:
-                        level2_text = str(cell.value).strip()
-                break
+            if not (min_col <= col <= max_col):
+                continue
+            if max_row < header_start_row or min_row > header_end_row:
+                continue
+
+            merged_range = merge_range
+            cell = sheet.cell(row=min_row, column=min_col)
+            if cell.value:
+                if min_row == header_start_row:
+                    level1_text = str(cell.value).strip()
+                elif min_row == header_start_row + 1:
+                    level2_text = str(cell.value).strip()
+            break
 
         # 如果不在合并单元格中，分别获取各行的文本
         if not merged_range:
             if header_rows >= 1:
-                cell1 = sheet.cell(row=1, column=col)
+                cell1 = sheet.cell(row=header_start_row, column=col)
                 if cell1.value:
                     level1_text = str(cell1.value).strip()
 
             if header_rows >= 2:
-                cell2 = sheet.cell(row=2, column=col)
+                cell2 = sheet.cell(row=header_start_row + 1, column=col)
                 if cell2.value:
                     level2_text = str(cell2.value).strip()
 

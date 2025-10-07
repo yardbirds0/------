@@ -1,0 +1,13 @@
+# 项目概述
+- **定位**：Python 3 / PySide6 桌面应用，用于读取多份财务 Excel，将 AI 生成的映射公式与人工校正结合，批量回填快报表空白数据。
+- **核心流程**：`FileManager` 负责加载与分类工作表 → `DataExtractor` 解析快报目标项与数据源项 → `AIMapper` 按 `[Sheet]![Item]` 语法向 LLM 请求初稿公式 → 用户在主界面（`main.py` 中的 `QMainWindow` + 多个 `QDockWidget`）审阅并编辑 → `CalculationEngine` 验证/计算公式并调用 `excel_utils_v2` 将结果写回副本。
+- **主要目录**：
+  - `components/` 高级交互控件（拖放树、公式编辑器、语法高亮等）。
+  - `models/` 定义 `TargetItem`、`SourceItem`、`WorkbookManager` 等数据模型与状态机。
+  - `modules/` 业务服务层（文件管理、数据提取、AI调用、公式计算、表格结构分析）。
+  - `utils/` Excel 解析与列规则、API 辅助、层级解析工具。
+  - `dialogs/` 与 `widgets/` 提供分类确认、配置等独立对话框/控件。
+  - `data/` 存放 `table_schema_rules.json`、任务记忆与表结构配置；根目录包含默认工作簿配置 `workbook_config.json` 与示例 Excel 模板。
+  - `tests/` 以脚本形式的调试/验证用例（如 `simple_test.py`、`verify_gui_display.py`、`debug_full_workflow.py`）。
+- **运行状态存储**：`workbook_config.json` 保存最近处理文件与分类结果；`data/memory/*.json` 记录任务记忆；`test_output.txt`、`sheet_analysis_report.json` 等保存诊断输出。
+- **外部依赖**：`PySide6` GUI、`openpyxl`/`pandas`/`numpy` 处理 Excel，`requests` 调用 LLM，`python-dateutil` 处理时间。AI 默认提示词定义在 `AIMapper`，允许用户在界面替换。

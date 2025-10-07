@@ -12,7 +12,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QPushButton, QGroupBox, QFrame, QCheckBox, QGraphicsDropShadowEffect, QScrollArea, QWidget
+    QPushButton, QGroupBox, QFrame, QCheckBox, QGraphicsDropShadowEffect,
+    QScrollArea, QWidget, QFormLayout, QSizePolicy
 )
 from PySide6.QtCore import Qt, Signal, QMimeData, QSize, QPropertyAnimation, QEasingCurve, QRect, QTimer
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QDrag, QPixmap, QPainter, QFont, QColor, QLinearGradient, QPalette
@@ -92,8 +93,10 @@ class ModernSheetItem(QWidget):
     def setup_ui(self):
         """设置现代化界面"""
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(10)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(12)
+
+        self.setMinimumHeight(56)
 
         # 使用新的√/x复选框
         self.checkbox = CheckMarkWidget()
@@ -116,18 +119,22 @@ class ModernSheetItem(QWidget):
         layout.addWidget(icon_label, 0, Qt.AlignCenter)
 
         # 工作表名称
-        name_label = QLabel(self.sheet_name)
-        name_label.setStyleSheet("""
+        self.name_label = QLabel(self.sheet_name)
+        self.name_label.setWordWrap(True)
+        self.name_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        self.name_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.name_label.setMinimumHeight(self.name_label.fontMetrics().height() + 12)
+        self.name_label.setStyleSheet("""
             QLabel {
                 font-size: 13px;
                 font-weight: 500;
                 color: #2c3e50;
                 background: transparent;
-                padding: 4px 6px;
-                border-radius: 4px;
+                padding: 6px 8px;
+                border-radius: 6px;
             }
         """)
-        layout.addWidget(name_label, 1)
+        layout.addWidget(self.name_label, 1, Qt.AlignVCenter)
 
         # 移除整体项目的边框，只保留背景和悬停效果
         self.setStyleSheet("""
@@ -141,8 +148,8 @@ class ModernSheetItem(QWidget):
             }
             ModernSheetItem:hover {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #e8f4fd, stop:1 #d6eaf8);
-                border: 1px solid #85c1e9;
+                    stop:0 #fef2f8, stop:1 #fce8f3);
+                border: 1px solid #eb91be;
             }
         """)
 
@@ -152,6 +159,12 @@ class ModernSheetItem(QWidget):
         shadow.setColor(QColor(0, 0, 0, 10))
         shadow.setOffset(0, 1)
         self.setGraphicsEffect(shadow)
+
+    def sizeHint(self):
+        hint = super().sizeHint()
+        name_height = self.name_label.sizeHint().height() if hasattr(self, 'name_label') else 0
+        total_height = max(hint.height(), name_height + 24)
+        return QSize(hint.width(), total_height)
 
     def get_category_icon(self) -> str:
         """获取分类图标"""
@@ -207,8 +220,8 @@ class ModernDragDropList(QListWidget):
             }
             QListWidget::item:selected {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #e3f2fd, stop:1 #bbdefb);
-                border: 2px solid #2196f3;
+                    stop:0 #fef2f8, stop:1 #f8d5ea);
+                border: 2px solid #eb91be;
             }
             QScrollBar:vertical {
                 border: none;
@@ -322,8 +335,8 @@ class ModernDragDropList(QListWidget):
             }
             QListWidget::item:selected {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #e3f2fd, stop:1 #bbdefb);
-                border: 2px solid #2196f3;
+                    stop:0 #fef2f8, stop:1 #f8d5ea);
+                border: 2px solid #eb91be;
             }
             QScrollBar:vertical {
                 border: none;

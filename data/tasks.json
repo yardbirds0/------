@@ -1,99 +1,1025 @@
 {
   "tasks": [
     {
-      "id": "bcd849ba-154b-498c-a62c-9a81d7e50509",
-      "name": "创建诊断脚本验证数据提取问题",
-      "description": "创建一个诊断脚本来检查实际的data_columns内容，验证键名不匹配问题，确认数据确实被提取但键名不对",
-      "notes": "这个诊断脚本将帮助确认问题的根本原因",
-      "status": "pending",
+      "id": "66bf8b62-5fc9-4d31-9115-49b0eaea0827",
+      "status": "completed",
+      "name": "实现公式实时预览计算链路",
+      "description": "让主数据网格中映射公式一旦变更即可自动刷新对应行的预览值和状态，无需点击“计算预览”按钮。涉及模型写入逻辑、公式编辑器委托以及计算引擎调用流程的调整。",
+      "implementationGuide": [
+        "在 TargetItemModel.setData、FormulaEditorDelegate.setModelData 以及 MainWindow.on_formula_changed 中统一收集被修改的 target_id 列表。",
+        "实现 MainWindow.recalculate_targets(target_ids)，内部复用 CalculationEngine.calculate_single_formula，仅在需要时初始化或缓存 CalculationEngine。",
+        "将计算结果写回 workbook_manager.calculation_results，更新 FormulaStatus 并触发目标行 dataChanged 与日志输出。",
+        "当批量粘贴或拖拽公式时，确保一次性传入多行 ID 并串行或批量计算，避免频繁重算整表。",
+        "更新进度条与按钮逻辑（例如隐藏“计算预览”或改为“强制重算”），并完善错误处理与提示。"
+      ],
       "dependencies": [],
-      "createdAt": "2025-09-28T08:41:44.961Z",
-      "updatedAt": "2025-09-28T08:41:44.961Z",
       "relatedFiles": [
         {
-          "path": "tests/diagnose_data_columns.py",
-          "type": "CREATE",
-          "description": "诊断脚本文件"
-        }
-      ],
-      "implementationGuide": "创建tests/diagnose_data_columns.py脚本:\n1. 加载Excel文件并提取数据\n2. 遍历所有source_items\n3. 打印每个item的data_columns键值对\n4. 对比TableColumnRules中定义的标准键名\n5. 输出键名匹配情况报告",
-      "verificationCriteria": "脚本能成功运行并输出清晰的键名对比报告，显示实际键名与期望键名的差异",
-      "analysisResult": "修复数据显示空白和TargetItem属性缺失问题。数据空白是因为提取时生成的列键名与显示时查找的键名不匹配。TargetItem缺少data_type属性导致双击查看详情时崩溃。"
-    },
-    {
-      "id": "adcf981e-db11-408b-86bb-7a318e7d1498",
-      "name": "修复EnhancedDataExtractor列键名生成逻辑",
-      "description": "修改_generate_column_key方法，使其生成的键名与TableColumnRules中定义的标准键名完全一致",
-      "notes": "确保生成的键名与TableColumnRules.get_ordered_column_keys()返回的键名完全一致",
-      "status": "pending",
-      "dependencies": [
-        {
-          "taskId": "bcd849ba-154b-498c-a62c-9a81d7e50509"
-        }
-      ],
-      "createdAt": "2025-09-28T08:41:44.961Z",
-      "updatedAt": "2025-09-28T08:41:44.961Z",
-      "relatedFiles": [
-        {
-          "path": "modules/enhanced_data_extractor.py",
+          "path": "main.py",
           "type": "TO_MODIFY",
-          "description": "_generate_column_key方法",
-          "lineStart": 349,
-          "lineEnd": 456
+          "description": "主窗口模型和计算流程调整",
+          "lineStart": 850,
+          "lineEnd": 4200
+        },
+        {
+          "path": "components/advanced_widgets.py",
+          "type": "TO_MODIFY",
+          "description": "公式委托写入实时触发支持",
+          "lineStart": 440,
+          "lineEnd": 640
+        },
+        {
+          "path": "modules/calculation_engine.py",
+          "type": "REFERENCE",
+          "description": "复用 calculate_single_formula 与结果结构",
+          "lineStart": 1,
+          "lineEnd": 400
         }
       ],
-      "implementationGuide": "修改modules/enhanced_data_extractor.py的_generate_column_key方法:\n1. 优先使用TableColumnRules.detect_table_type()检测表类型\n2. 根据表类型获取标准列规则列表\n3. 根据列头文本匹配到对应的标准键名\n4. 对于利润表：匹配'本期'→'本期金额'，'上期'→'上期金额'等\n5. 对于资产负债表：匹配'期末'→'期末余额'，'年初'→'年初余额'\n6. 对于科目余额表：处理二级列头，如'期末余额_借方'",
-      "verificationCriteria": "修改后的方法能为所有表类型生成正确的标准键名",
-      "analysisResult": "修复数据显示空白和TargetItem属性缺失问题。数据空白是因为提取时生成的列键名与显示时查找的键名不匹配。TargetItem缺少data_type属性导致双击查看详情时崩溃。"
+      "verificationCriteria": [
+        "手动编辑单行公式后预览值即时变化且日志记录成功。",
+        "粘贴多行公式或执行拖放后，所有受影响行的预览值同步更新。",
+        "错误公式会即时弹出提示并将状态列置为❌，无崩溃。"
+      ]
     },
     {
-      "id": "082e6ac7-bc20-4ab6-8bd2-8fda7d8a68ba",
-      "name": "为TargetItem添加data_type属性",
-      "description": "在TargetItem类中添加data_type属性，避免访问时报错",
-      "notes": "这是一个简单但关键的修复，防止程序崩溃",
-      "status": "pending",
+      "id": "b6776fc2-c73d-4c10-9f8d-32b136aab83c",
+      "status": "completed",
+      "name": "完善主界面及辅助视图列宽自适应",
+      "description": "为主数据网格、来源项树及其他表格视图提供智能列宽，让内容默认可读。需统一封装列宽刷新逻辑并在数据刷新后调用。",
+      "implementationGuide": [
+        "调整 main_data_grid.header 的 resize 策略，结合 setSectionResizeMode(QHeaderView.ResizeToContents) 或 Stretch，并限制状态与级别列最小宽。",
+        "在 MainWindow.refresh_main_table、populate_source_items、SheetClassificationDialog.load_sheets 等数据填充节点调用 auto_resize_columns(view)。",
+        "为 SearchableSourceTree、PropertyInspector 等复合控件补充列宽同步（如遍历 model 后调用 resizeColumnToContents）。",
+        "考虑大量数据时的性能，可设定最大宽度或延迟执行（QTimer.singleShot）。"
+      ],
+      "dependencies": [
+        "66bf8b62-5fc9-4d31-9115-49b0eaea0827"
+      ],
+      "relatedFiles": [
+        {
+          "path": "main.py",
+          "type": "TO_MODIFY",
+          "description": "主数据网格列宽调整与辅助方法",
+          "lineStart": 1400,
+          "lineEnd": 3000
+        },
+        {
+          "path": "components/advanced_widgets.py",
+          "type": "TO_MODIFY",
+          "description": "SearchableSourceTree 列宽自适应",
+          "lineStart": 640,
+          "lineEnd": 1100
+        },
+        {
+          "path": "dialogs/sheet_classification_dialog.py",
+          "type": "TO_MODIFY",
+          "description": "分类对话框 QTableWidget 列宽与列表样式",
+          "lineStart": 360,
+          "lineEnd": 720
+        }
+      ],
+      "verificationCriteria": [
+        "启动应用后无需手动拖拽即可完整查看每列内容。",
+        "更新数据（提取或 AI 映射后）列宽仍保持可读。",
+        "大量数据时列宽调整无明显卡顿。"
+      ]
+    },
+    {
+      "id": "1a7410af-5130-4697-86ac-0c15641893a5",
+      "status": "completed",
+      "name": "优化工作表分类确认窗口视觉与布局",
+      "description": "移除快报表与数据来源表列表项的灰色边框，恢复图标、复选框完整展示，同时确保窗口在不同分辨率下可读。包括 ModernDragDropList、ModernSheetItem 与 SheetClassificationConfirmDialog 的样式和尺寸。",
+      "implementationGuide": [
+        "更新 ModernDragDropList 与 ModernSheetItem 的样式表，去除外部灰色边框，留出 padding，并根据内容动态 sizeHint。",
+        "检查拖拽高亮样式，替换为无边框但背景加深的效果。",
+        "调整 CheckMarkWidget 大小策略，避免缩放压缩符号。",
+        "在 SheetClassificationConfirmDialog.init_ui 中放宽 groupbox 布局和 label sizePolicy，确保 sheet 名称全显。",
+        "回归测试拖拽、批量勾选、按钮事件不受影响。"
+      ],
       "dependencies": [],
-      "createdAt": "2025-09-28T08:41:44.961Z",
-      "updatedAt": "2025-09-28T08:41:44.961Z",
+      "relatedFiles": [
+        {
+          "path": "dialogs/sheet_classification_dialog.py",
+          "type": "TO_MODIFY",
+          "description": "拖拽列表与项目样式逻辑",
+          "lineStart": 20,
+          "lineEnd": 360
+        },
+        {
+          "path": "main.py",
+          "type": "TO_MODIFY",
+          "description": "单表确认对话框布局优化",
+          "lineStart": 5200,
+          "lineEnd": 5340
+        }
+      ],
+      "verificationCriteria": [
+        "打开分类器时列表无多余灰色边框，图标与复选框未被截断。",
+        "拖拽与复选框点击依旧生效，日志无异常。",
+        "Sheet 名称能完整显示或自动换行。"
+      ]
+    },
+    {
+      "id": "35f61c70-463e-4243-b27b-159d50490af3",
+      "status": "completed",
+      "name": "全面审查并修复主数据网格右键菜单功能",
+      "description": "逐项检查 show_context_menu 中挂载的所有 QAction 及其处理函数，验证单选或多选、无公式等边界场景，修复逻辑缺陷并补充缺失提示。输出检查报告。",
+      "implementationGuide": [
+        "罗列菜单项：编辑公式、查看详情、复制或删除或验证公式、批量 AI 或计算或验证、公式操作子菜单、状态操作、导出操作、重新提取、重置映射、查找引用。",
+        "对每个方法审查依赖，例如 edit_formula 依赖 FormulaEditDialog、batch_calculate 需调用实时计算 helper。",
+        "编写临时脚本或在调试日志中逐项触发，记录成功与异常情况。",
+        "修复发现的问题（如多选时禁用单项操作、缺少空集合校验、状态未更新等），必要时补充用户提示。",
+        "汇总检查结果（可写入 progress.md 或日志）并更新文档。"
+      ],
+      "dependencies": [
+        "66bf8b62-5fc9-4d31-9115-49b0eaea0827"
+      ],
+      "relatedFiles": [
+        {
+          "path": "main.py",
+          "type": "TO_MODIFY",
+          "description": "上下文菜单及相关处理函数",
+          "lineStart": 3600,
+          "lineEnd": 4600
+        },
+        {
+          "path": "components/advanced_widgets.py",
+          "type": "REFERENCE",
+          "description": "拖拽与公式编辑关联",
+          "lineStart": 400,
+          "lineEnd": 900
+        },
+        {
+          "path": "modules/calculation_engine.py",
+          "type": "REFERENCE",
+          "description": "计算与导出依赖",
+          "lineStart": 1,
+          "lineEnd": 400
+        }
+      ],
+      "verificationCriteria": [
+        "每个菜单项在单选和多选场景下行为正确，日志无异常。",
+        "无公式的项目不会出现复制或计算等无意义操作。",
+        "修复的缺陷有对应回归说明或记录。"
+      ]
+    },
+    {
+      "id": "3821308c-6daf-40f5-918e-4ff3cbfb1040",
+      "status": "completed",
+      "name": "恢复主数据网格列宽拖拽能力",
+      "description": "排查 DragDropTreeView 在主数据网格上的列宽控制，确保用户拖动表头时不会被自动重置，必要时增加用户调整后的持久化或节流逻辑。",
+      "implementationGuide": [
+        "在 MainWindow.setup_models 中绑定 QHeaderView.sectionResized 与 sectionPressed，用于识别用户拖拽动作。",
+        "新增 _user_column_widths、_main_auto_resizing 状态缓存，自动调整时跳过用户自定义列。",
+        "调整 schedule_main_table_resize/adjust_main_table_columns，保证 ResizeToContents 后恢复交互模式并尊重缓存宽度。",
+        "在数据重置与提取流程中清理缓存并重新安排自适应，确保刷新行为一致。"
+      ],
+      "dependencies": [],
+      "relatedFiles": [
+        {
+          "path": "main.py",
+          "type": "TO_MODIFY",
+          "description": "主数据网格列宽信号与调整逻辑",
+          "lineStart": 2480,
+          "lineEnd": 2820
+        }
+      ],
+      "verificationCriteria": [
+        "在界面中手动拖动第 2-4 列后列宽保持用户设定，自动调整不会覆盖。",
+        "触发数据刷新（提取、公式重算）时仍能对未自定义列进行内容自适应。"
+      ]
+    },
+    {
+      "id": "19b9e64f-c7ad-48e0-aefa-57d0ded95eb2",
+      "status": "completed",
+      "name": "优化来源项库列宽自适应",
+      "description": "调整 SearchableSourceTree 初始列宽，尤其是级别与科目代码列，使其根据内容自适应，避免默认宽度过大遮挡后续列。",
+      "implementationGuide": [
+        "重写 SearchableSourceTree._adjust_column_widths，针对标识列和名称列设置单独的最小与最大宽度范围。",
+        "其余数据列采用统一默认范围，保持 ResizeToContents 后的交互模式。",
+        "在刷新来源项数据时复用该方法，确保不同表类型均能获得紧凑列宽。"
+      ],
+      "dependencies": [],
+      "relatedFiles": [
+        {
+          "path": "components/advanced_widgets.py",
+          "type": "TO_MODIFY",
+          "description": "来源项树列宽策略",
+          "lineStart": 720,
+          "lineEnd": 900
+        }
+      ],
+      "verificationCriteria": [
+        "来源项树加载后，级别/科目代码列宽贴合内容，后续列保持完整显示。",
+        "切换不同来源表时列宽无明显遮挡或过宽情形。"
+      ]
+    },
+    {
+      "id": "8c69a57b-4371-4e90-8afa-1c22c7ab5260",
+      "status": "completed",
+      "name": "统一中右列布局宽度",
+      "description": "调整主界面水平分割器与布局策略，让中间主表格区域与右侧工具区保持相同宽度，提升查看来源项的空间。",
+      "implementationGuide": [
+        "在 init_ui 中为主 splitter 设置 stretchFactor 为 0-1-1。",
+        "指定默认 setSizes([320, 640, 640])，保证启动时中、右列等宽。",
+        "保持 splitter 可拖拽，供用户根据需求继续调整。"
+      ],
+      "dependencies": [],
+      "relatedFiles": [
+        {
+          "path": "main.py",
+          "type": "TO_MODIFY",
+          "description": "主分割器伸缩策略",
+          "lineStart": 1330,
+          "lineEnd": 1380
+        }
+      ],
+      "verificationCriteria": [
+        "应用启动后中列与右列初始宽度一致。",
+        "手动拖动 splitter 仍可正常调整布局。"
+      ]
+    },
+    {
+      "id": "39eb570a-b06c-4a31-a79b-c6cae55a8beb",
+      "status": "completed",
+      "name": "重构目标项结构面板显示来源详情",
+      "description": "将左侧“目标项结构”区域改为展示当前选中目标项的来源信息：无映射时提示缺失，有映射时按列显示来源表、层级、项目、数值等。",
+      "implementationGuide": [
+        "用 QStackedWidget 替换原 DragDropTreeView，加入提示页与 QTableWidget 来源矩阵页。",
+        "解析 MappingFormula 中的引用（parse_formula_references_v3/v2），构建来源索引缓存以快速匹配 SourceItem。",
+        "根据解析结果横向渲染来源信息，未命中时突出警示并输出缺省提示。",
+        "在选中目标项、公式更新与数据提取后刷新来源详情视图。"
+      ],
+      "dependencies": [
+        "3821308c-6daf-40f5-918e-4ff3cbfb1040"
+      ],
+      "relatedFiles": [
+        {
+          "path": "main.py",
+          "type": "TO_MODIFY",
+          "description": "左侧面板与来源详情渲染逻辑",
+          "lineStart": 1350,
+          "lineEnd": 3120
+        },
+        {
+          "path": "models/data_models.py",
+          "type": "REFERENCE",
+          "description": "SourceItem/MappngFormula 结构",
+          "lineStart": 80,
+          "lineEnd": 260
+        },
+        {
+          "path": "utils/excel_utils_v2.py",
+          "type": "REFERENCE",
+          "description": "公式引用解析函数",
+          "lineStart": 150,
+          "lineEnd": 360
+        }
+      ],
+      "verificationCriteria": [
+        "选中主数据网格目标项时左侧面板展示来源矩阵，包含表格/层级/列等信息。",
+        "无来源或未解析成功时展示清晰提示文案。"
+      ]
+    },
+    {
+      "id": "1cb1d8fd-4d5d-47e4-9917-78439273ff2f",
+      "status": "completed",
+      "name": "构建映射公式新格式与转换工具",
+      "description": "将当前引用格式（例如 [工作表:\"项目\"](单元格)）统一迁移为 [工作表]A9 等简单样式，提供双向转换与兼容读取能力。",
+      "implementationGuide": [
+        "梳理 MappingFormula 数据结构、utils.excel_utils_v2 引用构建与解析函数，新增转换工具以支持旧格式解析、新格式输出。",
+        "加载现有工作簿时批量转换旧格式公式为新格式，并在保存/写入路径统一输出新格式。",
+        "为后续模块提供转换 API，确保调用方无需关注旧格式细节。"
+      ],
+      "notes": "MappingFormula 与解析函数已统一生成 [表]单元格 格式，并保留旧格式兼容转换。",
+      "dependencies": [],
       "relatedFiles": [
         {
           "path": "models/data_models.py",
           "type": "TO_MODIFY",
-          "description": "TargetItem类定义",
-          "lineStart": 44,
-          "lineEnd": 89
-        }
-      ],
-      "implementationGuide": "修改models/data_models.py中的TargetItem类:\n1. 在字段定义中添加：data_type: str = 'text'\n2. 放在values字段之后，is_empty_target之前\n3. 默认值设为'text'，表示文本类型",
-      "verificationCriteria": "TargetItem实例能正常访问data_type属性而不报错",
-      "analysisResult": "修复数据显示空白和TargetItem属性缺失问题。数据空白是因为提取时生成的列键名与显示时查找的键名不匹配。TargetItem缺少data_type属性导致双击查看详情时崩溃。"
-    },
-    {
-      "id": "64585344-7ec2-4f39-82b6-07bb0325b6dc",
-      "name": "验证修复效果",
-      "description": "运行测试脚本验证数据显示问题已解决，所有表格都能正确显示数据",
-      "notes": "这是最终的验证步骤，确保所有问题都已解决",
-      "status": "pending",
-      "dependencies": [
-        {
-          "taskId": "adcf981e-db11-408b-86bb-7a318e7d1498"
+          "description": "MappingFormula 存储与辅助方法",
+          "lineStart": 160,
+          "lineEnd": 260
         },
         {
-          "taskId": "082e6ac7-bc20-4ab6-8bd2-8fda7d8a68ba"
+          "path": "utils/excel_utils_v2.py",
+          "type": "TO_MODIFY",
+          "description": "公式解析/构建工具",
+          "lineStart": 140,
+          "lineEnd": 360
+        },
+        {
+          "path": "modules/calculation_engine.py",
+          "type": "REFERENCE",
+          "description": "公式计算流程",
+          "lineStart": 1,
+          "lineEnd": 200
         }
       ],
-      "createdAt": "2025-09-28T08:41:44.961Z",
-      "updatedAt": "2025-09-28T08:41:44.961Z",
+      "verificationCriteria": [
+        "应用加载后，映射公式统一显示为 [表名]A1 样式。",
+        "导入旧格式公式仍可解析并在保存时转换为新格式。"
+      ]
+    },
+    {
+      "id": "1e44e4fe-b03e-45b7-8cbb-90783e6c5a65",
+      "status": "completed",
+      "name": "全局适配新映射公式格式",
+      "description": "更新计算引擎、AI 映射、主界面展示等所有引用公式的模块，使其消费与输出新格式，保持计算与高亮等功能正常。",
+      "implementationGuide": [
+        "审查 main.py、modules 与组件中 formula.formula 的读取与生成逻辑，统一替换为新格式转换工具。",
+        "同步更新语法高亮与验证规则，更换匹配模式以适配 [表]单元格。",
+        "回归计算、导出与日志输出，确保结果正确。"
+      ],
+      "notes": "计算引擎、AI 提示及 UI 展示均已切换至 [表]单元格，新旧公式可兼容读取。",
+      "dependencies": [
+        "1cb1d8fd-4d5d-47e4-9917-78439273ff2f"
+      ],
       "relatedFiles": [
         {
-          "path": "tests/verify_fixes.py",
-          "type": "CREATE",
-          "description": "验证脚本"
+          "path": "main.py",
+          "type": "TO_MODIFY",
+          "description": "主界面公式显示、语法高亮",
+          "lineStart": 860,
+          "lineEnd": 4600
+        },
+        {
+          "path": "modules/calculation_engine.py",
+          "type": "TO_MODIFY",
+          "description": "计算与验证流程",
+          "lineStart": 1,
+          "lineEnd": 320
+        },
+        {
+          "path": "modules/ai_mapper.py",
+          "type": "TO_MODIFY",
+          "description": "AI 生成公式输出",
+          "lineStart": 180,
+          "lineEnd": 360
         }
       ],
-      "implementationGuide": "创建tests/verify_fixes.py验证脚本:\n1. 加载Excel文件并提取数据\n2. 创建SearchableSourceTree并填充数据\n3. 切换到不同的工作表\n4. 验证每个表的数据列都有值显示\n5. 模拟双击操作验证TargetItem.data_type不报错\n6. 输出验证报告",
-      "verificationCriteria": "所有表格数据正常显示，双击查看详情不报错",
-      "analysisResult": "修复数据显示空白和TargetItem属性缺失问题。数据空白是因为提取时生成的列键名与显示时查找的键名不匹配。TargetItem缺少data_type属性导致双击查看详情时崩溃。"
+      "verificationCriteria": [
+        "主数据网格、属性面板、导出文件等位置均展示新格式公式。",
+        "公式校验与计算结果与旧版保持一致。"
+      ]
+    },
+    {
+      "id": "b8cb5f5f-7a55-4360-87bd-217c21ed9f70",
+      "status": "completed",
+      "name": "优化公式编辑器界面与引用详情",
+      "description": "放大公式编辑窗口主要编辑区，预览区域改为表格列出来源详情（层级、项目、科目代码、单元格、数值），公式文本仅保留新格式引用。",
+      "implementationGuide": [
+        "调整 FormulaEditDialog/相关布局，使主要编辑区域扩大约两倍。",
+        "新增引用详情表格组件，利用转换工具解析引用并填充层级/项目/科目/单元格/数值。",
+        "确保公式文本框与预览表格保持同步，并支持新格式引用插入。"
+      ],
+      "notes": "公式编辑器默认 1600×900，预览区域新增来源详情表格展示多来源信息。",
+      "dependencies": [
+        "1e44e4fe-b03e-45b7-8cbb-90783e6c5a65"
+      ],
+      "relatedFiles": [
+        {
+          "path": "main.py",
+          "type": "TO_MODIFY",
+          "description": "公式编辑对话框实现",
+          "lineStart": 4200,
+          "lineEnd": 4600
+        },
+        {
+          "path": "components/advanced_widgets.py",
+          "type": "TO_MODIFY",
+          "description": "FormulaEditDialog/FormulaEditorDelegate",
+          "lineStart": 1400,
+          "lineEnd": 1600
+        }
+      ],
+      "verificationCriteria": [
+        "公式编辑窗口尺寸明显增大，引用列表以表格形式展示详细信息。",
+        "更新公式后引用表格即时刷新并与新格式保持一致。"
+      ]
+    },
+    {
+      "id": "1cb26b5b-11ed-400c-87d1-6b27346948d2",
+      "status": "completed",
+      "name": "重构来源项库列展示配置",
+      "description": "移除来源项库搜索栏右侧的层级/全列按钮，新增“展示信息”配置弹窗，允许勾选列显示与拖拽调整顺序，并与树视图联动。",
+      "implementationGuide": [
+        "设计列配置对话框，支持复选框控制列显隐与拖拽排序。",
+        "默认载入当前列规则，并在用户确认后更新 SearchableSourceTree 列集合。",
+        "维护列配置状态，确保与刷新/筛选操作兼容。"
+      ],
+      "notes": "新增“展示信息”对话框，支持按工作表勾选列和拖拽排序，树视图即时应用配置。",
+      "dependencies": [],
+      "relatedFiles": [
+        {
+          "path": "components/advanced_widgets.py",
+          "type": "TO_MODIFY",
+          "description": "SearchableSourceTree 及相关 UI",
+          "lineStart": 560,
+          "lineEnd": 960
+        },
+        {
+          "path": "main.py",
+          "type": "REFERENCE",
+          "description": "右侧工具区初始化",
+          "lineStart": 1500,
+          "lineEnd": 2050
+        }
+      ],
+      "verificationCriteria": [
+        "点击“展示信息”弹窗可调整列勾选与顺序，关闭后树视图即时反映。",
+        "默认配置与当前程序一致，未勾选列不再显示。"
+      ]
+    },
+    {
+      "id": "f238d60a-c9b4-412e-a547-2f39d59daa01",
+      "status": "completed",
+      "name": "升级来源项库模糊搜索与高亮",
+      "description": "实现针对当前工作表的多字段模糊搜索，匹配到的行保留并高亮命中的字段，未匹配行隐藏。",
+      "implementationGuide": [
+        "扩展 SearchableSourceTree.filter_items，遍历列值进行模糊匹配（包含名称、科目代码、层级、数值等）。",
+        "为命中单元格应用高亮样式或自定义角色，提升可见性。",
+        "确保搜索与列配置联动，隐藏列不会影响匹配逻辑。"
+      ],
+      "notes": "搜索现支持多列模糊匹配并以浅黄色高亮命中单元格，未命中行自动隐藏。",
+      "dependencies": [
+        "1cb26b5b-11ed-400c-87d1-6b27346948d2"
+      ],
+      "relatedFiles": [
+        {
+          "path": "components/advanced_widgets.py",
+          "type": "TO_MODIFY",
+          "description": "搜索过滤与高亮逻辑",
+          "lineStart": 900,
+          "lineEnd": 1180
+        }
+      ],
+      "verificationCriteria": [
+        "搜索框输入任意关键字，可同时匹配项目名称、科目代码、层级或数值，并高亮显示命中内容。",
+        "未匹配的行被隐藏，清空搜索后内容恢复。"
+      ]
+    },
+    {
+      "id": "b7b408e9-edd2-409c-ae39-09c751f71751",
+      "status": "completed",
+      "name": "修复属性面板计算结果展示异常",
+      "description": "更新主界面属性面板中对计算结果的读取逻辑，兼容CalculationResult当前的数据结构，避免访问旧字段导致崩溃，并在失败时提供友好提示。",
+      "implementationGuide": [
+        "审查 models/data_models.py 中 CalculationResult 字段定义，确认可用属性。",
+        "调整 main.py::update_property_inspector 使用的结果取值与错误文案，确保 success 分支取 result，失败分支展示 error_message。",
+        "复核 WorkbookManager.calculation_results 写入流程，保证不会传入 None 导致类型错误。"
+      ],
+      "notes": "main.py 属性面板结果展示已改用 CalculationResult.result，并在失败时附带 error_message。",
+      "dependencies": [],
+      "relatedFiles": [
+        {
+          "path": "main.py",
+          "type": "TO_MODIFY",
+          "description": "属性面板计算结果展示逻辑",
+          "lineStart": 3880,
+          "lineEnd": 3980
+        },
+        {
+          "path": "models/data_models.py",
+          "type": "REFERENCE",
+          "description": "CalculationResult 结构定义",
+          "lineStart": 430,
+          "lineEnd": 520
+        }
+      ],
+      "verificationCriteria": [
+        "双击主表行时属性面板正常显示结果或错误提示，无崩溃。",
+        "成功计算的项目显示正确的数值字符串。",
+        "失败的计算显示\"计算失败\"并保留详细错误信息可检视。"
+      ]
+    },
+    {
+      "id": "3eee8899-87b5-426f-bded-a3bbbd7b9b66",
+      "status": "completed",
+      "name": "回归检查CalculationResult引用一致性",
+      "description": "全局检索代码库中对于 CalculationResult 结果字段的访问，确保不再引用已移除的 value 属性，并执行基础静态校验。",
+      "implementationGuide": [
+        "使用代码检索工具扫描 result.value 或 calculation_result.value 等模式并逐一确认。",
+        "必要时调整其他模块的引用方式保持一致。",
+        "运行 python -m compileall 针对关键模块做语法检查，确保修改未引入错误。"
+      ],
+      "notes": "已全局检索确认无 CalculationResult.value 残留，并执行 python -m compileall main.py 与 models 目录通过。",
+      "dependencies": [
+        "b7b408e9-edd2-409c-ae39-09c751f71751"
+      ],
+      "relatedFiles": [
+        {
+          "path": "main.py",
+          "type": "REFERENCE",
+          "description": "验证修改生效",
+          "lineStart": 3880,
+          "lineEnd": 3980
+        },
+        {
+          "path": "models/data_models.py",
+          "type": "REFERENCE",
+          "description": "结果结构参考",
+          "lineStart": 430,
+          "lineEnd": 520
+        }
+      ],
+      "verificationCriteria": [
+        "代码库中不存在对 CalculationResult.value 的引用。",
+        "关键模块通过 python -m compileall 校验无语法错误。"
+      ]
+    },
+    {
+      "id": "4a76afb2-e1fc-4fac-8027-7e5f0a0ec163",
+      "status": "completed",
+      "name": "自动识别数据列并扩展列筛选入口",
+      "description": "导入工作表时全量识别列头并自动判定数据列，默认仅显示检测出的数据列，同时为待写入数据表增加列筛选按钮复用来源项库的列配置体验。",
+      "implementationGuide": [
+        "调整 excel_utils_v2 等导入逻辑获取完整列头并标记数据列。",
+        "为 WorkbookManager/TargetItemModel 存储列元数据并驱动主表显示。",
+        "在主界面的待写入数据表添加列配置按钮，复用现有列筛选对话框逻辑。"
+      ],
+      "dependencies": [],
+      "relatedFiles": [
+        {
+          "path": "utils/excel_utils_v2.py",
+          "type": "TO_MODIFY",
+          "description": "列头识别逻辑",
+          "lineStart": 1,
+          "lineEnd": 400
+        },
+        {
+          "path": "main.py",
+          "type": "TO_MODIFY",
+          "description": "列筛选按钮与列元数据应用",
+          "lineStart": 1200,
+          "lineEnd": 2200
+        },
+        {
+          "path": "components/advanced_widgets.py",
+          "type": "REFERENCE",
+          "description": "列配置对话框实现",
+          "lineStart": 560,
+          "lineEnd": 960
+        }
+      ],
+      "verificationCriteria": [
+        "导入任意表后自动识别所有列头并正确区分数据列。",
+        "待写入数据表默认显示数据列，点击新按钮可自定义列集合与顺序。",
+        "列配置修改与来源项库保持一致的交互体验。"
+      ],
+      "notes": "TableSchemaAnalyzer 与 DataExtractor 现统一生成动态列元数据，来源项库默认展示自动判定的数据列并支持自定义配置，主数据网格新增列配置按钮可控制列显隐与顺序。"
+    },
+    {
+      "id": "0a7e327b-2ac2-41a2-b178-9f2d21ac0bb2",
+      "status": "completed",
+      "name": "公式编辑实时保存机制",
+      "description": "在单行或批量更新映射公式时即时触发保存流程，确保切换表格或重启后公式仍保留，并与现有实时计算流程协同。",
+      "implementationGuide": [
+        "梳理 handle_formula_updates、WorkbookManager 保存接口。",
+        "在公式写入后调用持久化方法并处理错误提示。",
+        "确保批量更新与 AI 生成公式同样触发保存且无性能瓶颈。"
+      ],
+      "dependencies": [
+        "4a76afb2-e1fc-4fac-8027-7e5f0a0ec163"
+      ],
+      "relatedFiles": [
+        {
+          "path": "main.py",
+          "type": "TO_MODIFY",
+          "description": "公式更新与保存触发",
+          "lineStart": 3600,
+          "lineEnd": 4200
+        },
+        {
+          "path": "models/workbook_manager.py",
+          "type": "REFERENCE",
+          "description": "保存逻辑",
+          "lineStart": 1,
+          "lineEnd": 400
+        }
+      ],
+      "verificationCriteria": [
+        "编辑或批量更新公式后日志显示保存完成并落地。",
+        "切换表格或重启程序公式不丢失。",
+        "实时计算与保存流程互不阻塞。"
+      ],
+      "notes": "handle_formula_updates 现触发 QTimer 延迟自动保存，FileManager 提供 JSON 持久化并在加载数据后恢复公式并重新计算预览值。"
+    },
+    {
+      "id": "dd1dcd83-378e-45c1-9186-8050934422eb",
+      "status": "completed",
+      "name": "分类器表名显示修复",
+      "description": "修复导入 Excel 分类表格时表名被文本边框遮挡问题，确保上下对齐完整显示。",
+      "implementationGuide": [
+        "检查 sheet_classification_dialog 中表名展示部件。",
+        "调整样式表、布局或 sizePolicy 确保边框不遮挡文本。",
+        "验证不同长度表名在多分辨率下均清晰可见。"
+      ],
+      "dependencies": [],
+      "relatedFiles": [
+        {
+          "path": "dialogs/sheet_classification_dialog.py",
+          "type": "TO_MODIFY",
+          "description": "分类对话框布局与样式",
+          "lineStart": 20,
+          "lineEnd": 380
+        }
+      ],
+      "verificationCriteria": [
+        "分类对话框中表名上下不被裁剪。",
+        "调整窗口尺寸仍保持可读。"
+      ],
+      "notes": "ModernSheetItem 现为名称标签启用自动换行与最小高度，并整体提高项高度，避免文本被边框裁剪。"
+    },
+    {
+      "id": "1c4e1150-81fe-4f3c-a40d-ee6d0027c1f2",
+      "status": "completed",
+      "name": "全局表格列宽拖动统一化",
+      "description": "梳理项目中所有 QTableView/QTreeView，确保全部支持用户拖动列宽，并封装可复用的配置助手。",
+      "implementationGuide": [
+        "列举主界面、来源项库、对话框等所有表格控件。",
+        "创建 enable_column_resize 辅助方法统一设置 sectionResizeMode 和信号。",
+        "在初始化与数据刷新后调用助手，验证用户拖动不被自动重置。"
+      ],
+      "dependencies": [
+        "0a7e327b-2ac2-41a2-b178-9f2d21ac0bb2"
+      ],
+      "relatedFiles": [
+        {
+          "path": "main.py",
+          "type": "TO_MODIFY",
+          "description": "主界面表格列宽配置",
+          "lineStart": 2200,
+          "lineEnd": 3200
+        },
+        {
+          "path": "components/advanced_widgets.py",
+          "type": "TO_MODIFY",
+          "description": "共享控件列宽设置",
+          "lineStart": 400,
+          "lineEnd": 1180
+        },
+        {
+          "path": "dialogs",
+          "type": "REFERENCE",
+          "description": "含表格的对话框",
+          "lineStart": 1,
+          "lineEnd": 400
+        }
+      ],
+      "verificationCriteria": [
+        "所有表格视图表头可拖动列宽且调整后保持。",
+        "自动列宽或刷新不会覆盖用户设置。"
+      ],
+      "notes": "新增 ensure_interactive_header 帮助函数，主数据网格、来源项树、模板/分类等所有 QTableWidget/QTableView/QTreeView 初始化与数据刷新后均重设列宽并改为 Interactive，用户拖拽不再被覆盖。"
+    },
+    {
+      "id": "026c1aa4-13ae-4f54-8b89-98ff6f2401f1",
+      "status": "completed",
+      "name": "表格内容换行与行高自适应",
+      "description": "为所有表格实现内容自动换行与行高自适应逻辑，保证文本完整显示且性能可控。",
+      "implementationGuide": [
+        "评估使用 setWordWrap、resizeRowToContents 或自定义委托。",
+        "在统一助手中根据列宽变化刷新行高，可考虑批量或延迟更新。",
+        "验证大数据量下性能及展示效果。"
+      ],
+      "dependencies": [
+        "1c4e1150-81fe-4f3c-a40d-ee6d0027c1f2"
+      ],
+      "relatedFiles": [
+        {
+          "path": "main.py",
+          "type": "TO_MODIFY",
+          "description": "主表与属性展示行高逻辑",
+          "lineStart": 2200,
+          "lineEnd": 3400
+        },
+        {
+          "path": "components/advanced_widgets.py",
+          "type": "TO_MODIFY",
+          "description": "自定义委托或工具",
+          "lineStart": 900,
+          "lineEnd": 1500
+        }
+      ],
+      "verificationCriteria": [
+        "所有表格单元格内容被截断时自动换行并调整行高。",
+        "行高调整在大量行场景下仍保持流畅。"
+      ],
+      "notes": "新增 ensure_word_wrap/schedule_row_resize 助手，主数据网格、来源项库、模板与分类对话框等所有表格视图启用换行并在列宽变化后自动调整行高。"
+    },
+    {
+      "id": "73951c00-2ba8-4524-bb31-f771a9b14abc",
+      "status": "completed",
+      "name": "合并单元格检查器与AI配置优化",
+      "description": "将公式检查器与属性检查器合并为“单元格检查”标签，上部展示公式信息，下部以表格呈现属性；移除公式检查器中的 AI 配置，仅保留 AI 配置标签且功能完整。",
+      "implementationGuide": [
+        "调整主界面 tab 结构，将两个检查器合并重排布局。",
+        "用表格控件呈现属性数据并缩小行间距。",
+        "移除原公式检查器中的 AI 配置元素，确保 AI 配置标签提供完整功能。"
+      ],
+      "dependencies": [
+        "026c1aa4-13ae-4f54-8b89-98ff6f2401f1"
+      ],
+      "relatedFiles": [
+        {
+          "path": "main.py",
+          "type": "TO_MODIFY",
+          "description": "检查器区域布局与数据绑定",
+          "lineStart": 3300,
+          "lineEnd": 4200
+        },
+        {
+          "path": "components/advanced_widgets.py",
+          "type": "REFERENCE",
+          "description": "相关小部件实现",
+          "lineStart": 1200,
+          "lineEnd": 1700
+        }
+      ],
+      "verificationCriteria": [
+        "主界面出现“单元格检查”标签，上部公式信息、下部属性表格展示。",
+        "原 AI 配置功能仅在 AI 配置标签中可用且完整。",
+        "属性展示行距紧凑且数据完整。"
+      ],
+      "notes": "新增单元格检查 Tab 集成公式编辑器与 PropertyTableWidget 表格，移除原属性检查器和公式 Tab 内的 AI 快速配置，仅保留 AI 配置独立选项卡，并同步更新属性刷新逻辑。"
+    },
+    {
+      "id": "3615d0ce-d3d0-41ea-947c-d583df395510",
+      "status": "completed",
+      "name": "统一字体风格管理",
+      "description": "为项目常见控件（表格表头、单元格、按钮等）建立统一字体管理器，确保同类元素字体大小一致并易于调整。",
+      "implementationGuide": [
+        "统计当前界面使用的字体设置位置。",
+        "创建统一的字体管理工具集中管理标准字号。",
+        "将表格表头、单元格等控件替换为统一调用并验证视觉一致。"
+      ],
+      "dependencies": [
+        "73951c00-2ba8-4524-bb31-f771a9b14abc"
+      ],
+      "relatedFiles": [
+        {
+          "path": "main.py",
+          "type": "TO_MODIFY",
+          "description": "引用统一字体设置",
+          "lineStart": 200,
+          "lineEnd": 6000
+        },
+        {
+          "path": "components/advanced_widgets.py",
+          "type": "TO_MODIFY",
+          "description": "共享控件字体应用",
+          "lineStart": 200,
+          "lineEnd": 1600
+        }
+      ],
+      "verificationCriteria": [
+        "新的字体管理器可统一设置表头与单元格字体。",
+        "所有表格同类元素字体大小一致，无明显差异。",
+        "调整配置后可全局生效。"
+      ]
+    },
+    {
+      "id": "43321bb4-e904-45b5-9a98-a8eee45fa27b",
+      "status": "completed",
+      "name": "主界面玻璃化主题替换",
+      "description": "重新设计主界面背景与样式,应用毛玻璃/透明、阴影、圆角等效果,移除原灰色背景,保持功能逻辑不变。",
+      "summary": "✅ 已实现完整玻璃化主题系统,包含325行QSS样式定义和QGraphicsDropShadowEffect阴影效果。主窗口采用半透明渐变背景(rgba 0.75-0.85),所有面板使用圆角(8-14px)和毛玻璃效果,支持hover/pressed/selected状态,移除所有灰色背景,视觉效果现代化且保持功能完整。程序已成功启动并验证。",
+      "implementationGuide": [
+        "✅ 研究 Qt 实现玻璃效果的可行方案并确定实现路径。",
+        "✅ 更新主窗口与关键面板的样式表与配色,保证文字对比度。",
+        "✅ 验证各控件在新主题下的可读性与交互性。"
+      ],
+      "dependencies": [
+        "3615d0ce-d3d0-41ea-947c-d583df395510"
+      ],
+      "relatedFiles": [
+        {
+          "path": "main.py",
+          "type": "TO_MODIFY",
+          "description": "主界面样式与布局",
+          "lineStart": 1,
+          "lineEnd": 6000
+        },
+        {
+          "path": "components/advanced_widgets.py",
+          "type": "REFERENCE",
+          "description": "需要同步样式的控件",
+          "lineStart": 1,
+          "lineEnd": 1600
+        }
+      ],
+      "verificationCriteria": [
+        "主界面背景呈现玻璃质感效果，无大面积灰色背景。",
+        "主要面板拥有圆角、阴影，与主题协调。",
+        "功能交互保持原有行为。"
+      ]
+    },
+    {
+      "id": "3aefeaa4-26fa-48b9-b76b-87953b34edb7",
+      "status": "completed",
+      "name": "重构列头检测并跳过无效说明行",
+      "description": "增强工作簿列头解析逻辑，自动忽略含有“表”“单位”“说明”等摘要性行或全空/重复字符的行，准确定位真实列标题，并提供统一的列元数据结构。",
+      "implementationGuide": [
+        "梳理 utils/excel_utils_v2.TableSchemaAnalyzer/DataExtractor 入口，设计 detect_header_row/detect_data_start 等辅助函数。",
+        "根据样本工作表统计关键词、非空单元格密度、列内多样性等指标，组合判定规则跳过说明行。",
+        "为列名执行 strip/重复检查，遇到空列自动生成唯一字段名并标记 is_placeholder，返回结构供后续模块使用。"
+      ],
+      "dependencies": [],
+      "relatedFiles": [
+        {
+          "path": "utils/excel_utils_v2.py",
+          "type": "TO_MODIFY",
+          "description": "列头检测与数据提取核心逻辑"
+        },
+        {
+          "path": "data/header_samples.json",
+          "type": "REFERENCE",
+          "description": "列头识别样本配置"
+        },
+        {
+          "path": "modules/table_schema_analyzer.py",
+          "type": "TO_MODIFY",
+          "description": "列模式识别入口"
+        }
+      ],
+      "verificationCriteria": "加载不同格式的工作表时能正确识别列标题，不再出现“列、列”或空白列名；说明性文字被跳过且列元数据保持稳定。",
+      "notes": "完成（2025-09-29 11:35）：TableSchemaAnalyzer 引入说明行过滤与占位列识别，DataExtractor/TargetColumnEntry 同步暴露 is_placeholder 元数据，列头定位与多列映射元数据稳定。"
+    },
+    {
+      "id": "faa5c842-ae6d-4807-951d-39c33a3c577a",
+      "status": "completed",
+      "name": "移除全表聚合并清洗列配置",
+      "description": "撤销来源项库中的“全部工作表”聚合选项，确保每张表使用自身列配置，并在列配置缓存中清洗非法列名同步更新来源树显示。",
+      "implementationGuide": [
+        "检查 workbook_config.json 与 SearchableSourceTree 列配置弹窗，移除聚合字段并按工作表粒度维护列集合。",
+        "更新 WorkbookManager/SourceColumnConfig 持久化结构，保存 per-sheet 列清单与清洗后的展示名。",
+        "调整来源项树刷新逻辑，验证列配置切换后仍与识别结果一致，无冗余列出现。"
+      ],
+      "dependencies": [
+        "3aefeaa4-26fa-48b9-b76b-87953b34edb7"
+      ],
+      "relatedFiles": [
+        {
+          "path": "modules/table_schema_analyzer.py",
+          "type": "TO_MODIFY",
+          "description": "列元数据构建与缓存"
+        },
+        {
+          "path": "components/advanced_widgets.py",
+          "type": "TO_MODIFY",
+          "description": "来源项树列配置入口"
+        },
+        {
+          "path": "workbook_config.json",
+          "type": "TO_MODIFY",
+          "description": "默认列配置存储"
+        }
+      ],
+      "verificationCriteria": "来源项库仅展示当前表列，不再出现“全部工作表”选项；列配置文件与 UI 中的列名均为清洗后的有效文本。",
+      "notes": "完成（2025-09-29 14:40）：SearchableSourceTree 依据 sheet 列元数据刷新列集合，下拉菜单仅列出实际工作表，列配置缓存按表维护并自动清理失效项。"
+    },
+    {
+      "id": "55d691e1-a63b-4929-a845-7b5637678922",
+      "status": "completed",
+      "name": "扩展待写入模型支持多列映射",
+      "description": "重构待写入数据表模型，使单行可关联多个列待写入项，完整暴露所有列头与对应映射目标，支持多公式/多值映射。",
+      "implementationGuide": [
+        "审视 TargetWorksheetModel/TargetItemModel 数据结构，新增 ColumnMappingEntry 列表保存列名、当前值、公式或常量等信息。",
+        "同步调整 WorkbookManager 数据载入过程，从列元数据生成待写入列集合，并维护映射配置缓存。",
+        "确保多列映射能够与 CalculationEngine、公式保存机制一起工作，提供批量更新接口。"
+      ],
+      "dependencies": [
+        "faa5c842-ae6d-4807-951d-39c33a3c577a"
+      ],
+      "relatedFiles": [
+        {
+          "path": "models/data_models.py",
+          "type": "TO_MODIFY",
+          "description": "目标项/待写入映射结构定义"
+        },
+        {
+          "path": "modules/data_extractor.py",
+          "type": "TO_MODIFY",
+          "description": "待写入列数据生成"
+        },
+        {
+          "path": "modules/calculation_engine.py",
+          "type": "REFERENCE",
+          "description": "计算接口兼容性"
+        }
+      ],
+      "verificationCriteria": "待写入数据模型能返回多列映射信息；每行可记录多个公式/常量映射且保持与计算、保存流程兼容。",
+      "notes": "完成（2025-09-29 14:40）：TargetItem.columns 现持有 TargetColumnEntry 字典，DataExtractor/WorkbookManager 注册所有列键并通过 ensure_mapping 支持多列映射管理。"
+    },
+    {
+      "id": "e6a5081f-240a-475e-8b7d-13c5ca9a8d3c",
+      "status": "completed",
+      "name": "更新待写入数据表 UI 与交互",
+      "description": "在主界面待写入数据表展示所有列头与映射详情，提供列配置按钮、状态提示及多列值预览，确保与来源项列配置体验一致。",
+      "implementationGuide": [
+        "更新 main.py 中待写入表初始化与数据绑定逻辑，遍历 ColumnMappingEntry 填充列。",
+        "复用列配置对话框，让待写入表可独立勾选和排序列；根据列状态渲染提示（如缺失映射高亮），验证批量写入、多选编辑场景下 UI 响应正确。",
+        "验证批量写入、多选编辑场景下 UI 响应正确，无列错位或数据遗失。"
+      ],
+      "dependencies": [
+        "55d691e1-a63b-4929-a845-7b5637678922"
+      ],
+      "relatedFiles": [
+        {
+          "path": "main.py",
+          "type": "TO_MODIFY",
+          "description": "待写入数据表呈现与交互"
+        },
+        {
+          "path": "components/advanced_widgets.py",
+          "type": "REFERENCE",
+          "description": "列配置弹窗逻辑"
+        },
+        {
+          "path": "widgets",
+          "type": "REFERENCE",
+          "description": "待写入表相关自定义控件"
+        }
+      ],
+      "verificationCriteria": "主界面待写入数据表展示多列映射信息并支持列配置；多个映射列可同时编辑预览且状态提示正确。",
+      "notes": "完成（2025-09-29 14:40）：TargetWorksheetModel 动态生成列头，列表单元格展示公式/预览值联动，右侧列配置按钮复用 ColumnConfigDialog 管理列显隐与顺序。"
+    },
+    {
+      "id": "45811a98-67a0-4920-a4a3-ac90fe9a4643",
+      "status": "completed",
+      "name": "多列映射公式持久化与回填",
+      "description": "扩展映射公式保存/加载与 AI 生成流程，支持每个待写入列独立的公式或常量配置，并在重新加载时完整恢复。",
+      "implementationGuide": [
+        "更新 formulas 持久化结构，区分列级映射条目并写入 mapping.json。",
+        "调整 handle_formula_updates、CalculationEngine 入口，允许一次提交多个列映射并返回列级结果。",
+        "确保 AI 映射、批量导入等流程能够遍历多列配置，日志与错误提示按列输出。"
+      ],
+      "dependencies": [
+        "55d691e1-a63b-4929-a845-7b5637678922"
+      ],
+      "relatedFiles": [
+        {
+          "path": "modules/file_manager.py",
+          "type": "TO_MODIFY",
+          "description": "映射公式读写结构"
+        },
+        {
+          "path": "main.py",
+          "type": "TO_MODIFY",
+          "description": "公式更新与回填逻辑"
+        },
+        {
+          "path": "modules/ai_mapper.py",
+          "type": "REFERENCE",
+          "description": "AI 生成映射接口"
+        }
+      ],
+      "verificationCriteria": "保存的 mapping.json 按列存储映射；重新加载工作簿时各列映射完全恢复并可被计算/AI 流程识别。",
+      "notes": "完成（2025-09-29 14:40）：FileManager 保存/加载遍历列键写入 mapping.json，MainWindow 自动保存逻辑按列恢复公式与常量，CalculationEngine 回填结果保持同步。"
+    },
+    {
+      "id": "c9192929-81bc-49ce-a387-fbd30f4fcc18",
+      "status": "in_progress",
+      "name": "多行列头布局与合并显示",
+      "description": "在抽取列元数据的基础上补充合并跨度信息，并在主数据网格与来源项树中以两行表头复刻 Excel 的合并列头展示。",
+      "implementationGuide": [
+        "扩展 TableSchemaAnalyzer/ColumnInfo 记录合并块的列跨度与行跨度，并在 DataExtractor.metadata 中暴露。",
+        "新增 MultiRowHeaderView 与布局推导函数，为 DragDropTreeView 与 SearchableSourceTree 应用两行表头绘制。",
+        "在 MainWindow 中组合列元数据并根据当前列配置动态应用表头布局。"
+      ],
+      "dependencies": [
+        "3aefeaa4-26fa-48b9-b76b-87953b34edb7"
+      ],
+      "relatedFiles": [
+        {
+          "path": "modules/table_schema_analyzer.py",
+          "type": "TO_MODIFY",
+          "description": "列模式识别，导出合并信息"
+        },
+        {
+          "path": "modules/data_extractor.py",
+          "type": "TO_MODIFY",
+          "description": "注册列元数据与布局"
+        },
+        {
+          "path": "models/data_models.py",
+          "type": "TO_MODIFY",
+          "description": "WorkbookManager 带头部行信息"
+        },
+        {
+          "path": "components/advanced_widgets.py",
+          "type": "TO_MODIFY",
+          "description": "表头视图与来源树"
+        },
+        {
+          "path": "main.py",
+          "type": "TO_MODIFY",
+          "description": "主数据网格布局应用"
+        }
+      ],
+      "verificationCriteria": "加载含有年初余额/借贷等合并列头的工作表时，主数据网格与来源项树的表头以两行展示并合并一级标题；加载单行表头的工作表保持原有展示。"
     }
   ]
 }
