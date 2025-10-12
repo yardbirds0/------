@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
     QToolBar,
     QStyledItemDelegate,
     QStyleOptionViewItem,
+    QStyle,
     QHeaderView,
     QAbstractItemView,
     QFileDialog,
@@ -1102,32 +1103,34 @@ class SearchHighlightDelegate(QStyledItemDelegate):
         self.highlight_color = QColor("#ffe0f0")  # 粉色高亮，匹配主题
 
     def sizeHint(self, option, index: QModelIndex):
-        """计算单元格大小提示（支持多行文本自动行高）"""
-        # 获取显示文本
+        """计算单元格大小提示（支持单元格自动换行与多行显示）。"""
         text = index.data(Qt.DisplayRole)
         if not text:
             return super().sizeHint(option, index)
 
-        # 计算文本实际所需高度
         from PySide6.QtGui import QFontMetrics
 
-        fm = QFontMetrics(option.font)
+        metrics = QFontMetrics(option.font)
+        column_width = option.rect.width()
 
-        # 计算列宽
-        column_width = option.rect.width() if option.rect.width() > 0 else 200
+        if column_width <= 0 and option.widget is not None:
+            try:
+                column_width = option.widget.columnWidth(index.column())
+            except Exception:
+                column_width = 200
 
-        # 计算文本边界矩形（支持换行）
-        text_str = str(text)
-        line_count = text_str.count("\n") + 1  # 换行符数量+1
+        available_width = max(40, column_width - 12)
+        text_rect_height = metrics.boundingRect(
+            0,
+            0,
+            available_width,
+            0,
+            Qt.TextWordWrap,
+            str(text),
+        ).height()
 
-        # 每行基础高度（增加行间距）
-        line_height = fm.height() + 4  # 增加4px行间距
-
-        # 总高度 = 行数 * 行高 + 上下padding
-        total_height = line_count * line_height + 20  # 增加padding到20px
-
-        # 最小高度30，最大高度300（增加最大高度限制以支持更多行）
-        total_height = max(30, min(300, total_height))
+        total_height = text_rect_height + 12
+        total_height = max(30, min(600, total_height))
 
         return QSize(column_width, total_height)
 
@@ -1158,12 +1161,12 @@ class SearchHighlightDelegate(QStyledItemDelegate):
             painter.fillRect(option.rect, highlight_overlay)
 
             # 如果是选中状态，添加额外的选中效果
-            if option.state & QStyleOptionViewItem.State_Selected:
+            if option.state & QStyle.State_Selected:
                 selection_overlay = QColor(235, 145, 190, 50)  # 更浅的半透明粉色
                 painter.fillRect(option.rect, selection_overlay)
 
             # 如果是悬停状态，添加额外的悬停效果
-            elif option.state & QStyleOptionViewItem.State_MouseOver:
+            elif option.state & QStyle.State_MouseOver:
                 hover_overlay = QColor(235, 145, 190, 30)  # 非常浅的半透明粉色
                 painter.fillRect(option.rect, hover_overlay)
 
@@ -2560,9 +2563,21 @@ class MainWindow(QMainWindow):
                 color: white;
                 font-weight: bold;
             }
-        """
+            """
         )
         sheet_select_layout.addWidget(self.fullscreen_btn)
+
+        self.save_formula_btn = QPushButton("💾 保存公式")
+        self.save_formula_btn.setMinimumHeight(35)
+        self.save_formula_btn.setToolTip("将当前工作表的公式映射导出为 JSON 文件。")
+        self.save_formula_btn.clicked.connect(self.save_formula_snapshot_via_dialog)
+        sheet_select_layout.addWidget(self.save_formula_btn)
+
+        self.import_formula_btn = QPushButton("📥 导入公式")
+        self.import_formula_btn.setMinimumHeight(35)
+        self.import_formula_btn.setToolTip("从 JSON 文件导入映射公式并应用到当前工作表。")
+        self.import_formula_btn.clicked.connect(self.import_formula_snapshot_via_dialog)
+        sheet_select_layout.addWidget(self.import_formula_btn)
 
         sheet_select_layout.addStretch()
         table_toolbar_layout.addLayout(sheet_select_layout)
@@ -2845,6 +2860,213 @@ class MainWindow(QMainWindow):
             ] = self._target_column_config
 
         self._apply_main_header_layout()
+        self._sync_analysis_context()
+
+    def _sync_analysis_context(self):
+        """同步分析TAB所需的列状态与工作簿信息。"""
+        if not hasattr(self, "chat_controller") or not self.chat_controller:
+            return
+
+        if not self.workbook_manager:
+            self.chat_controller.update_analysis_context(None)
+            return
+
+        self._ensure_target_column_config()
+        current_sheet = getattr(self.target_model, "active_sheet_name", None)
+        target_config = self._target_column_config or []
+        source_configs = getattr(self.source_tree, "sheet_column_configs", {}) or {}
+
+        self.chat_controller.update_analysis_context(
+            self.workbook_manager,
+            current_sheet=current_sheet,
+            target_column_config=target_config,
+            source_column_configs=source_configs,
+        )
+
+    def _on_source_tree_column_config_changed(self, sheet_name: str):
+        """来源项列配置发生变化时刷新分析上下文。"""
+        self._sync_analysis_context()
+
+    def apply_analysis_formulas(self, sheet_name: str, entries: List[Dict[str, str]]) -> Tuple[int, int]:
+        """将 AI 返回的映射公式应用到当前工作簿。"""
+        if not self.workbook_manager:
+            return 0, len(entries)
+
+        sheet_targets = [
+            item
+            for item in self.workbook_manager.target_items.values()
+            if item.sheet_name == sheet_name
+        ]
+        name_map: Dict[str, List[TargetItem]] = {}
+        for item in sheet_targets:
+            name_map.setdefault(item.name, []).append(item)
+
+        applied = 0
+        updated_ids: List[str] = []
+
+        for entry in entries:
+            target_candidates = name_map.get(entry["target_name"], [])
+            if not target_candidates:
+                self.log_manager.warning(f"未找到目标项: {entry['target_name']}")
+                continue
+
+            target_item = target_candidates[0]
+            column_key = entry["column_key"]
+            column_display = entry["column_display"]
+            formula_text = entry["formula"]
+
+            mapping = self.workbook_manager.ensure_mapping(
+                target_item.id, column_key, column_display
+            )
+            mapping.update_formula(
+                formula_text,
+                status=FormulaStatus.AI_GENERATED,
+                column_name=column_display,
+            )
+            mapping.constant_value = None
+            mapping.validation_error = ""
+            if "confidence" in entry and entry["confidence"] is not None:
+                try:
+                    confidence_value = float(entry["confidence"])
+                    mapping.ai_confidence = max(0.0, min(1.0, confidence_value))
+                except (TypeError, ValueError):
+                    mapping.ai_confidence = 0.0
+            if entry.get("reasoning"):
+                mapping.ai_reasoning = str(entry["reasoning"])
+            applied += 1
+            updated_ids.append(target_item.id)
+
+        if applied:
+            self.handle_formula_updates(updated_ids, reason="ai_analysis")
+            self.log_manager.info(f"🤖 已应用 {applied}/{len(entries)} 条AI映射公式")
+
+        return applied, len(entries)
+
+    def _collect_formula_entries_for_sheet(self, sheet_name: str) -> List[Dict[str, Any]]:
+        """收集指定工作表的映射公式，供导出使用。"""
+        if not self.workbook_manager:
+            return []
+
+        entries: List[Dict[str, Any]] = []
+        for target in self.workbook_manager.target_items.values():
+            if target.sheet_name != sheet_name:
+                continue
+            for mapping in self.workbook_manager.iter_mappings(target.id):
+                if not mapping.formula:
+                    continue
+                column_display = mapping.column_name or mapping.column_key or "__default__"
+                entries.append(
+                    {
+                        "target_name": target.name,
+                        "column_display": column_display,
+                        "column_key": mapping.column_key or "__default__",
+                        "formula": mapping.formula,
+                        "confidence": mapping.ai_confidence,
+                        "reasoning": mapping.ai_reasoning,
+                    }
+                )
+        return entries
+
+    def save_formula_snapshot_via_dialog(self) -> None:
+        """通过文件对话框导出当前工作表的公式映射。"""
+        sheet_name = getattr(self.target_model, "active_sheet_name", None)
+        if not sheet_name:
+            QMessageBox.information(self, "提示", "请先选择需要保存公式的目标表。")
+            return
+
+        entries = self._collect_formula_entries_for_sheet(sheet_name)
+        if not entries:
+            QMessageBox.information(self, "提示", "当前工作表没有可保存的公式映射。")
+            return
+
+        safe_sheet = self.file_manager.sanitize_filename(sheet_name)
+        default_dir = self.file_manager.formula_dir
+        default_dir.mkdir(parents=True, exist_ok=True)
+        default_path = default_dir / f"{safe_sheet}.json"
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "保存公式映射",
+            str(default_path),
+            "JSON 文件 (*.json)",
+        )
+        if not file_path:
+            return
+
+        metadata = {
+            "source": "manual_export",
+            "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+        }
+
+        saved_path = self.file_manager.export_formula_snapshot(
+            sheet_name=sheet_name,
+            entries=entries,
+            destination=Path(file_path),
+            metadata=metadata,
+        )
+
+        if saved_path:
+            self.log_manager.info(f"📤 公式映射已保存至 {saved_path}")
+            QMessageBox.information(self, "保存成功", f"公式映射已保存到:\n{saved_path}")
+        else:
+            QMessageBox.warning(self, "保存失败", "无法保存公式映射，请检查日志获取详细信息。")
+
+    def import_formula_snapshot_via_dialog(self) -> None:
+        """通过文件对话框导入公式映射 JSON。"""
+        sheet_name = getattr(self.target_model, "active_sheet_name", None)
+        if not sheet_name:
+            QMessageBox.information(self, "提示", "请先选择要导入公式的目标表。")
+            return
+
+        default_dir = self.file_manager.formula_dir
+        default_dir.mkdir(parents=True, exist_ok=True)
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "导入公式映射",
+            str(default_dir),
+            "JSON 文件 (*.json)",
+        )
+        if not file_path:
+            return
+
+        try:
+            snapshot = self.file_manager.import_formula_snapshot(
+                sheet_name=sheet_name,
+                file_path=Path(file_path),
+            )
+        except (ValueError, FileNotFoundError) as exc:
+            QMessageBox.warning(self, "导入失败", str(exc))
+            self.log_manager.warning(f"导入公式映射失败: {exc}")
+            return
+
+        applied, total = self.apply_analysis_formulas(sheet_name, snapshot.get("entries", []))
+        if applied:
+            QMessageBox.information(
+                self,
+                "导入成功",
+                f"已导入 {applied}/{total} 条公式映射。",
+            )
+            self.log_manager.info(f"📥 从 {file_path} 导入 {applied}/{total} 条公式。")
+        else:
+            QMessageBox.warning(
+                self,
+                "导入提示",
+                "未能应用导入的公式，请确认文件内容与当前工作表匹配。",
+            )
+
+        # 将最新状态写回默认目录，便于后续复用
+        updated_entries = self._collect_formula_entries_for_sheet(sheet_name)
+        metadata = {
+            "source": "manual_import",
+            "imported_from": str(file_path),
+            "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+        }
+        self.file_manager.export_formula_snapshot(
+            sheet_name=sheet_name,
+            entries=updated_entries,
+            metadata=metadata,
+        )
 
     def schedule_autosave(self, delay_ms: int = 800):
         """调度自动保存映射公式"""
@@ -2880,6 +3102,7 @@ class MainWindow(QMainWindow):
         self.source_tree = SearchableSourceTree()
         self.source_tree.setDragEnabled(True)
         self.source_tree.setAcceptDrops(False)
+        self.source_tree.columnConfigChanged.connect(self._on_source_tree_column_config_changed)
 
         # 🔧 修复：为来源项库应用SearchHighlightDelegate，确保搜索高亮可见
         self.source_highlight_delegate = SearchHighlightDelegate(self.source_tree)
@@ -4041,6 +4264,7 @@ class MainWindow(QMainWindow):
             self.schedule_main_table_resize(0)
             self.update_toolbar_states()
             self.refresh_target_source_summary()
+            self._sync_analysis_context()
 
         except Exception as e:
             error_msg = f"数据提取时发生异常: {str(e)}"
@@ -4242,8 +4466,18 @@ class MainWindow(QMainWindow):
                     mapping_data = json.loads(json_content)
 
                     if "mappings" in mapping_data:
-                        ai_response.mappings = mapping_data["mappings"]
-                        ai_response.processed_mappings = len(ai_response.mappings)
+                        mappings_payload = mapping_data["mappings"]
+                        ai_response.mappings = mappings_payload
+
+                        if isinstance(mappings_payload, dict):
+                            ai_response.processed_mappings = sum(
+                                len(columns) if isinstance(columns, dict) else 1
+                                for columns in mappings_payload.values()
+                            )
+                        elif isinstance(mappings_payload, list):
+                            ai_response.processed_mappings = len(mappings_payload)
+                        else:
+                            ai_response.processed_mappings = 0
                     else:
                         ai_response.success = False
                         ai_response.error_message = "AI响应缺少mappings字段"
@@ -4283,63 +4517,172 @@ class MainWindow(QMainWindow):
 
     def apply_ai_mappings(self, ai_response: Any) -> int:
         """应用AI映射结果"""
-        from models.data_models import MappingFormula, FormulaStatus
-        from utils.excel_utils import validate_formula_syntax_v2
+        from models.data_models import FormulaStatus, TargetItem
+        from utils.excel_utils import validate_formula_syntax_three_segment
+
+        if not self.workbook_manager:
+            return 0
 
         applied_count = 0
         valid_count = 0
         invalid_count = 0
-        updated_targets: List[str] = []
+        updated_targets: Set[str] = set()
 
-        for mapping in ai_response.mappings:
-            target_id = mapping.get("target_id")
-            formula = mapping.get("formula", "")
+        mappings_payload = getattr(ai_response, "mappings", {})
 
-            if not target_id or not formula:
-                continue
+        if isinstance(mappings_payload, dict):
+            # 新结构：{ target_name: { column_name: {formula, confidence, reasoning} } }
+            target_lookup: Dict[str, List[TargetItem]] = {}
+            for item in self.workbook_manager.target_items.values():
+                target_lookup.setdefault(item.name, []).append(item)
 
-            # 验证目标项是否存在
-            if target_id not in self.workbook_manager.target_items:
-                self.log_manager.warning(f"目标项不存在: {target_id}")
-                continue
+            for target_name, column_map in mappings_payload.items():
+                if not isinstance(column_map, dict):
+                    column_map = {"__default__": column_map}
 
-            # 验证公式语法（支持三段式）
-            is_valid, error_msg = validate_formula_syntax_three_segment(
-                formula, self.workbook_manager
-            )
+                candidates = target_lookup.get(target_name, [])
+                if not candidates:
+                    self.log_manager.warning(f"AI映射目标未匹配: {target_name}")
+                    continue
 
-            if is_valid:
-                # 创建或更新映射公式
-                mapping_formula = MappingFormula(
-                    target_id=target_id,
-                    formula=formula,
+                target_item = candidates[0]
+
+                for column_label, mapping_info in column_map.items():
+                    if isinstance(mapping_info, dict):
+                        formula_text = str(mapping_info.get("formula", "")).strip()
+                        confidence_value = mapping_info.get("confidence", 0.0)
+                        reasoning_text = str(mapping_info.get("reasoning", "")).strip()
+                    else:
+                        formula_text = str(mapping_info).strip()
+                        confidence_value = 0.0
+                        reasoning_text = ""
+
+                    if not formula_text:
+                        continue
+
+                    if not reasoning_text:
+                        reasoning_text = str(
+                            getattr(ai_response, "model_used", "")
+                        ).strip()
+                        if reasoning_text:
+                            reasoning_text = f"AI生成 (模型: {reasoning_text})"
+                        else:
+                            reasoning_text = "AI生成结果，缺少详细推理。"
+
+                    is_valid, error_msg = validate_formula_syntax_three_segment(
+                        formula_text, self.workbook_manager
+                    )
+                    if not is_valid:
+                        invalid_count += 1
+                        self.log_manager.warning(
+                            f"AI生成的公式无效: {formula_text} - {error_msg}"
+                        )
+                        continue
+
+                    column_key = column_label
+                    column_display = column_label
+                    for key, column_entry in (target_item.columns or {}).items():
+                        if column_entry.display_name == column_label or key == column_label:
+                            column_key = key
+                            column_display = column_entry.display_name or column_label
+                            break
+
+                    mapping = self.workbook_manager.ensure_mapping(
+                        target_item.id, column_key, column_display
+                    )
+                    mapping.update_formula(
+                        formula_text,
+                        status=FormulaStatus.AI_GENERATED,
+                        column_name=column_display,
+                    )
+                    mapping.constant_value = None
+                    mapping.validation_error = ""
+
+                    try:
+                        confidence_float = float(confidence_value)
+                    except (TypeError, ValueError):
+                        confidence_float = 0.0
+                    mapping.ai_confidence = max(0.0, min(1.0, confidence_float))
+                    mapping.ai_reasoning = reasoning_text
+
+                    applied_count += 1
+                    valid_count += 1
+                    updated_targets.add(target_item.id)
+                    self.log_manager.info(
+                        f"应用AI映射: {target_item.name}[{column_display}] = {formula_text}"
+                    )
+
+        elif isinstance(mappings_payload, list):
+            # 旧结构兼容：[{"target_id": str, "formula": str, ...}]
+            for mapping in mappings_payload:
+                if not isinstance(mapping, dict):
+                    continue
+
+                target_id = mapping.get("target_id") or mapping.get("targetId")
+                formula_text = str(mapping.get("formula", "")).strip()
+
+                if not target_id or not formula_text:
+                    continue
+
+                if target_id not in self.workbook_manager.target_items:
+                    self.log_manager.warning(f"目标项不存在: {target_id}")
+                    continue
+
+                is_valid, error_msg = validate_formula_syntax_three_segment(
+                    formula_text, self.workbook_manager
+                )
+                if not is_valid:
+                    invalid_count += 1
+                    self.log_manager.warning(
+                        f"AI生成的公式无效: {formula_text} - {error_msg}"
+                    )
+                    continue
+
+                mapping_formula = self.workbook_manager.ensure_mapping(
+                    target_id, "__default__", ""
+                )
+                mapping_formula.update_formula(
+                    formula_text,
                     status=FormulaStatus.AI_GENERATED,
                 )
+                mapping_formula.constant_value = None
+                mapping_formula.validation_error = ""
 
-                # 设置AI相关信息
-                mapping_formula.ai_confidence = mapping.get("confidence", 0.8)
-                mapping_formula.ai_reasoning = (
-                    f"AI生成 (模型: {ai_response.model_used})"
-                )
+                try:
+                    confidence_float = float(mapping.get("confidence", 0.0))
+                except (TypeError, ValueError):
+                    confidence_float = 0.0
+                if mapping.get("reasoning"):
+                    reasoning_text = str(mapping.get("reasoning", "")).strip()
+                else:
+                    model_label = str(getattr(ai_response, "model_used", "")).strip()
+                    reasoning_text = (
+                        f"AI生成 (模型: {model_label})"
+                        if model_label
+                        else "AI生成结果，缺少详细推理。"
+                    )
 
-                self.workbook_manager.add_mapping_formula(target_id, mapping_formula)
+                mapping_formula.ai_confidence = max(0.0, min(1.0, confidence_float))
+                mapping_formula.ai_reasoning = reasoning_text
+
                 applied_count += 1
                 valid_count += 1
-                updated_targets.append(target_id)
+                updated_targets.add(target_id)
 
                 target_name = self.workbook_manager.target_items[target_id].name
-                self.log_manager.info(f"应用AI映射: {target_name} = {formula}")
+                self.log_manager.info(
+                    f"应用AI映射: {target_name} = {formula_text}"
+                )
 
-            else:
-                invalid_count += 1
-                self.log_manager.warning(f"AI生成的公式无效: {formula} - {error_msg}")
+        else:
+            self.log_manager.warning("AI响应mappings结构无效，未应用任何公式。")
 
         # 更新响应统计
         ai_response.valid_mappings = valid_count
         ai_response.invalid_mappings = invalid_count
 
         if updated_targets:
-            self.handle_formula_updates(updated_targets, reason="ai")
+            self.handle_formula_updates(list(updated_targets), reason="ai")
 
         return applied_count
 
@@ -4837,6 +5180,7 @@ class MainWindow(QMainWindow):
             # 关键修复4：增加延迟以确保view完全刷新
             # 原来是100ms，现在改为300ms，给view更多时间完成异步更新
             self.schedule_main_table_resize(300)
+            self._sync_analysis_context()
         except Exception as e:
             self.log_manager.error(f"切换到工作表'{sheet_name}'时出错: {e}")
             import traceback
@@ -5197,6 +5541,7 @@ class MainWindow(QMainWindow):
             "sheet": source_item.sheet_name if source_item else sheet_name or "-",
             "level": str(source_item.hierarchy_level) if source_item else "-",
             "item": source_item.name if source_item else item_name or "-",
+            "identifier": source_item.identifier if source_item and source_item.identifier else "-",
             "account_code": source_item.account_code if source_item else "-",
             "column": column_display,
             "cell": source_item.cell_address if source_item else cell_address or "-",
@@ -5215,6 +5560,7 @@ class MainWindow(QMainWindow):
         attributes = [
             ("工作表", "sheet", lambda info: info.get("sheet", "-")),
             ("项目名称", "item", lambda info: info.get("item", "-")),
+            ("标识符", "identifier", lambda info: info.get("identifier", "-")),
             ("科目代码", "account_code", lambda info: info.get("account_code", "-")),
             ("数据列", "column", lambda info: info.get("column", "-")),
             ("单元格", "cell", lambda info: info.get("cell", "-")),
@@ -5281,9 +5627,39 @@ class MainWindow(QMainWindow):
 
         if hasattr(self, "target_source_description"):
             missing_count = sum(1 for info in sources_info if info.get("missing"))
-            summary = f"来源数量：{len(sources_info)} 个"
+            total_sources = len(sources_info)
+
+            ai_status = "未经过"
+            confidence_text = "--"
+            reasoning_text = "--"
+
+            if self.workbook_manager:
+                active_column = getattr(self, "_active_formula_column", None) or "__default__"
+                mapping_obj = self.workbook_manager.get_mapping(target_item.id, active_column)
+                if mapping_obj:
+                    try:
+                        confidence_value = float(mapping_obj.ai_confidence)
+                        confidence_value = max(0.0, min(1.0, confidence_value))
+                        confidence_text = f"{confidence_value * 100:.2f}%"
+                    except (TypeError, ValueError):
+                        confidence_text = "--"
+
+                    if mapping_obj.ai_reasoning:
+                        reasoning_text = self._shorten_text(mapping_obj.ai_reasoning, 120)
+
+                    if (
+                        mapping_obj.status == FormulaStatus.AI_GENERATED
+                        or confidence_text != "--"
+                        or mapping_obj.ai_reasoning
+                    ):
+                        ai_status = "经过"
+
+            summary = (
+                f"来源数量:{total_sources}个，当前项{ai_status}AI解析，"
+                f"AI回报回归率:{confidence_text}，AI认为回报率理由为:{reasoning_text}"
+            )
             if missing_count:
-                summary += f"（其中 {missing_count} 个未在来源项库中找到）"
+                summary += f"（{missing_count} 个来源缺失）"
             self.target_source_description.setText(summary)
 
     def _extract_source_value_for_key(

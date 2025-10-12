@@ -217,18 +217,28 @@ class DataExtractor:
                 # 如果没有数值，尝试提取文本（确保文本列也能被提取）
                 if value is None or value == "":
                     text_value = self._extract_text_value(cell)
-                    if text_value and text_value.strip():
+                    if text_value is not None and text_value != "":
                         value = text_value
 
                 if value is None or value == "":
-                    continue
+                    if meta and meta.get("is_data_column", False):
+                        value_to_store = 0.0
+                    else:
+                        value_to_store = ""
+                else:
+                    value_to_store = value
 
                 display_name = meta.get("display_name") or self._generate_column_key(col_info, sheet_name)
-                data_columns[display_name] = value
+                data_columns[display_name] = value_to_store
                 column_details[display_name] = meta
 
-                if meta.get("is_data_column") and main_value is None and isinstance(value, (int, float)):
-                    main_value = float(value)
+                if (
+                    meta
+                    and meta.get("is_data_column")
+                    and main_value is None
+                    and isinstance(value_to_store, (int, float))
+                ):
+                    main_value = float(value_to_store)
 
             # 只有找到有效数据才创建来源项
             if data_columns:
@@ -240,7 +250,9 @@ class DataExtractor:
                     hierarchy_level=hierarchy_level,
                     data_columns=data_columns,
                     main_value=main_value,
-                    table_type="trial_balance"
+                    table_type="trial_balance",
+                    original_text=account_name,
+                    raw_level=hierarchy_level
                 )
                 source.column_info.update(column_details)
                 sources.append(source)
@@ -269,6 +281,11 @@ class DataExtractor:
             if not item_name:
                 continue
 
+            item_info = self._analyze_target_item_text(item_name)
+            clean_name = item_info['clean_name'] if item_info else item_name.strip()
+            raw_level = int(item_info['level']) if item_info else 0
+            display_index = item_info['numbering'] if item_info else ""
+
             # 提取所有数据列
             data_columns: Dict[str, Any] = {}
             column_details: Dict[str, Dict[str, Any]] = {}
@@ -290,34 +307,98 @@ class DataExtractor:
                 # 如果没有数值，尝试提取文本（确保文本列也能被提取）
                 if value is None or value == "":
                     text_value = self._extract_text_value(cell)
-                    if text_value and text_value.strip():
+                    if text_value is not None and text_value != "":
                         value = text_value
 
                 if value is None or value == "":
-                    continue
+                    if meta and meta.get("is_data_column", False):
+                        value_to_store = 0.0
+                    else:
+                        value_to_store = ""
+                else:
+                    value_to_store = value
 
                 display_name = meta.get("display_name") or self._generate_column_key(col_info, sheet_name)
-                data_columns[display_name] = value
+                data_columns[display_name] = value_to_store
                 column_details[display_name] = meta
 
-                if meta.get("is_data_column") and main_value is None and isinstance(value, (int, float)):
-                    main_value = float(value)
+                if (
+                    meta
+                    and meta.get("is_data_column")
+                    and main_value is None
+                    and isinstance(value_to_store, (int, float))
+                ):
+                    main_value = float(value_to_store)
 
             if data_columns:
                 source = self._create_enhanced_source_item(
                     sheet_name=sheet_name,
-                    account_name=item_name,
+                    account_name=clean_name,
                     account_code="",
                     row_num=row_num,
                     hierarchy_level=0,
                     data_columns=data_columns,
                     main_value=main_value,
-                    table_type=schema.table_type.value
+                    table_type=schema.table_type.value,
+                    original_text=item_name,
+                    raw_level=raw_level,
+                    display_index=display_index
                 )
                 source.column_info.update(column_details)
                 sources.append(source)
 
+        self._assign_general_source_hierarchy(sources)
         return sources
+
+    def _assign_general_source_hierarchy(self, sources: List[SourceItem]) -> None:
+        """基于缩进信息为通用来源项分配层级编号。"""
+        if not sources:
+            return
+
+        # 按行号保证顺序
+        sources.sort(key=lambda item: item.row)
+
+        sibling_counters: Dict[int, int] = {}
+        stack: List[SourceItem] = []
+
+        for item in sources:
+            raw_level = getattr(item, "raw_level", 0) or 0
+
+            # 弹出不再是父级的项目（同级或更浅）
+            while stack and raw_level <= getattr(stack[-1], "raw_level", 0):
+                stack.pop()
+
+            depth = len(stack) + 1
+
+            # 清理更深层级的计数器
+            for depth_key in list(sibling_counters.keys()):
+                if depth_key > depth:
+                    sibling_counters.pop(depth_key, None)
+
+            current_index = sibling_counters.get(depth, 0) + 1
+            sibling_counters[depth] = current_index
+
+            if stack:
+                parent_number = stack[-1].hierarchical_number
+                item.parent_hierarchical_number = parent_number or ""
+                if parent_number:
+                    item.hierarchical_number = f"{parent_number}.{current_index}"
+                else:
+                    item.hierarchical_number = str(current_index)
+            else:
+                item.parent_hierarchical_number = ""
+                item.hierarchical_number = str(current_index)
+
+            item.hierarchy_level = depth
+
+            if not item.account_code:
+                display_name = item.name
+                if item.display_index:
+                    display_name = f"{item.display_index} {display_name}".strip()
+                indent_spaces = max(depth - 1, 0)
+                item.full_name_with_indent = f"{'  ' * indent_spaces}{display_name}" if display_name else ""
+
+            stack.append(item)
 
     def _extract_account_info(self, sheet, row_num: int, schema: TableSchema) -> Optional[Dict[str, str]]:
         """提取科目信息"""
@@ -329,9 +410,9 @@ class DataExtractor:
             cell = sheet.cell(row=row_num, column=code_col)
             if cell.value:
                 code_text = str(cell.value).strip()
-                # 优化科目代码识别模式
-                if re.match(r'^\d{3,12}(\.\d+)*$', code_text):  # 支持3-12位代码，可带小数点分隔
-                    account_code = code_text
+                normalized = code_text.replace(" ", "")
+                if re.match(r'^[A-Za-z0-9]{2,12}(?:\.[A-Za-z0-9]{1,12})*$', normalized):
+                    account_code = normalized
                     break
 
         # 从名称列提取科目名称
@@ -374,9 +455,20 @@ class DataExtractor:
         else:
             return 0
 
-    def _create_enhanced_source_item(self, sheet_name: str, account_name: str, account_code: str,
-                                     row_num: int, hierarchy_level: int, data_columns: Dict[str, Any],
-                                     main_value: Any, table_type: str) -> SourceItem:
+    def _create_enhanced_source_item(
+        self,
+        sheet_name: str,
+        account_name: str,
+        account_code: str,
+        row_num: int,
+        hierarchy_level: int,
+        data_columns: Dict[str, Any],
+        main_value: Any,
+        table_type: str,
+        original_text: str = "",
+        raw_level: int = 0,
+        display_index: str = "",
+    ) -> SourceItem:
         """创建增强的来源项"""
 
         # 生成唯一ID
@@ -400,10 +492,17 @@ class DataExtractor:
         # ⭐ 关键：将data_columns复制到values字典，用于三段式引用的验证和计算
         source.values = dict(data_columns)  # 创建副本避免共享引用
 
+        # 保存原始文本及层级提示
+        source.original_text = original_text or account_name
+        source.display_index = display_index or source.display_index
+        source.raw_level = raw_level
+
         # 设置层级信息
         if account_code:
             parent_code = self._get_parent_account_code(account_code)
             source.set_hierarchy_info(account_code, hierarchy_level, parent_code)
+        elif hierarchy_level > 0:
+            source.hierarchy_level = hierarchy_level
 
         return source
 
@@ -500,16 +599,25 @@ class DataExtractor:
 
     def _get_parent_account_code(self, account_code: str) -> str:
         """获取父级科目代码"""
-        if len(account_code) <= 4:
+        code = account_code.strip()
+        if not code:
             return ""
 
-        # 根据层级规则返回父级代码
-        if len(account_code) >= 6:
-            return account_code[:4]  # 返回一级科目
-        elif len(account_code) >= 8:
-            return account_code[:6]  # 返回二级科目
-        elif len(account_code) >= 10:
-            return account_code[:8]  # 返回三级科目
+        if '.' in code:
+            parts = [part for part in code.split('.') if part]
+            if len(parts) > 1:
+                return '.'.join(parts[:-1])
+            return ""
+
+        if len(code) <= 4:
+            return ""
+
+        if len(code) >= 10:
+            return code[:8]
+        if len(code) >= 8:
+            return code[:6]
+        if len(code) >= 6:
+            return code[:4]
 
         return ""
 

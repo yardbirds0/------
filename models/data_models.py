@@ -252,6 +252,27 @@ class TargetItem:
         """cell_address属性，返回target_cell_address的值"""
         return self.target_cell_address
 
+    @property
+    def identifier(self) -> Optional[str]:
+        """返回该目标项的唯一层级标识符。"""
+        value = (self.hierarchical_number or "").strip()
+        return value or None
+
+    def has_identifier(self) -> bool:
+        """标识该目标项是否具备有效identifier。"""
+        return self.identifier is not None
+
+    def resolve_parent_identifier(
+        self, target_lookup: Dict[str, "TargetItem"]
+    ) -> Optional[str]:
+        """根据提供的目标索引解析父级identifier。"""
+        if not self.parent_id:
+            return None
+        parent = target_lookup.get(self.parent_id)
+        if not parent:
+            return None
+        return parent.identifier
+
 
 @dataclass
 class SourceItem:
@@ -276,6 +297,10 @@ class SourceItem:
     parent_code: str = ""  # 父级科目代码
     full_name_with_indent: str = ""  # 带缩进的完整名称
     has_children: bool = False  # 是否有子项
+    display_index: str = ""  # 原始编号/序号
+    raw_level: int = 0  # 原始缩进层级，便于构建层级结构
+    hierarchical_number: str = ""  # 层级编号（如1、1.1、1.1.1）
+    parent_hierarchical_number: str = ""  # 父级层级编号
 
     # 多列数据支持（新增）
     data_columns: Dict[str, Any] = field(default_factory=dict)  # 多列数据字典
@@ -349,6 +374,29 @@ class SourceItem:
             display_data[col_name] = col_value
 
         return display_data
+
+    @property
+    def identifier(self) -> Optional[str]:
+        """返回来源项的唯一标识符（优先科目代码）。"""
+        value = (self.account_code or "").strip()
+        if value:
+            return value
+
+        alt = (self.hierarchical_number or "").strip()
+        return alt or None
+
+    @property
+    def parent_identifier(self) -> Optional[str]:
+        """返回来源项父级的标识符。"""
+        value = (self.parent_code or "").strip()
+        if value:
+            return value
+
+        alt = (self.parent_hierarchical_number or "").strip()
+        return alt or None
+
+    def has_identifier(self) -> bool:
+        return self.identifier is not None
 
 
 @dataclass
@@ -731,6 +779,11 @@ class WorkbookManager:
                 "name": item.name,
                 "sheet_name": item.sheet_name,
                 "level": item.level,
+                "hierarchical_level": item.hierarchical_level,
+                "hierarchical_number": item.hierarchical_number,
+                "identifier": item.identifier,
+                "parent_identifier": item.resolve_parent_identifier(self.target_items),
+                "parent_id": item.parent_id,
                 "target_cell_address": item.target_cell_address,
                 "is_empty_target": item.is_empty_target,
                 "notes": item.notes,
@@ -744,6 +797,12 @@ class WorkbookManager:
                 "cell_address": item.cell_address,
                 "value": item.value,
                 "value_type": item.value_type,
+                "hierarchy_level": item.hierarchy_level,
+                "account_code": item.account_code,
+                "identifier": item.identifier,
+                "parent_identifier": item.parent_identifier,
+                "hierarchical_number": getattr(item, "hierarchical_number", None),
+                "parent_hierarchical_number": getattr(item, "parent_hierarchical_number", None),
                 "notes": item.notes
             } for sid, item in self.source_items.items()},
 
@@ -760,6 +819,7 @@ class WorkbookManager:
                         "is_valid": formula.is_valid,
                         "validation_error": formula.validation_error,
                         "ai_confidence": formula.ai_confidence,
+                        "ai_reasoning": formula.ai_reasoning,
                         "version": formula.version,
                         "notes": formula.notes
                     }
@@ -837,8 +897,14 @@ class AIAnalysisResponse:
     """AI分析响应数据模型"""
 
     success: bool = False
-    mappings: List[Dict[str, str]] = field(default_factory=list)
+    mappings: Union[Dict[str, Any], List[Dict[str, Any]]] = field(default_factory=dict)
     error_message: str = ""
+    response_time: float = 0.0
+    model_used: str = ""
+    processed_mappings: int = 0
+    tokens_used: int = 0
+    valid_mappings: int = 0
+    invalid_mappings: int = 0
 
 
 @dataclass
