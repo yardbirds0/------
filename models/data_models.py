@@ -281,9 +281,9 @@ class SourceItem:
     id: str  # 唯一标识符
     sheet_name: str  # 所属工作表名
     name: str  # 项目名称
-    cell_address: str  # 单元格地址
-    row: int  # 行号
-    column: str  # 列字母
+    row: int = 0  # 行号
+    column: str = ""  # 列字母
+    cell_address: str = ""  # 单元格地址
     value: Union[int, float, str, None] = None  # 数值
 
     # 扩展信息
@@ -301,6 +301,9 @@ class SourceItem:
     raw_level: int = 0  # 原始缩进层级，便于构建层级结构
     hierarchical_number: str = ""  # 层级编号（如1、1.1、1.1.1）
     parent_hierarchical_number: str = ""  # 父级层级编号
+
+    # 行次信息（资产负债表等双栏表格使用）
+    line_number: Optional[int] = None  # 行次编号，支持排序
 
     # 多列数据支持（新增）
     data_columns: Dict[str, Any] = field(default_factory=dict)  # 多列数据字典
@@ -525,9 +528,14 @@ class WorksheetInfo:
 
 @dataclass
 class WorkbookManager:
-    """工作簿管理器 - 管理整个工作簿的数据"""
+    """工作簿管理器 - 管理整个工作簿的数据（支持多文件）"""
 
-    file_path: str = ""  # Excel文件路径
+    file_path: str = ""  # 主Excel文件路径（单文件模式）或合并后的虚拟路径（多文件模式）
+
+    # 多文件支持（新增）
+    source_files: List[str] = field(default_factory=list)  # 所有源文件路径列表
+    sheet_file_mapping: Dict[str, str] = field(default_factory=dict)  # {sheet_name: file_path}
+    is_multi_file_mode: bool = False  # 是否为多文件模式
 
     # 工作表信息
     worksheets: Dict[str, WorksheetInfo] = field(default_factory=dict)

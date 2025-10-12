@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from datetime import datetime
@@ -65,6 +66,15 @@ class AnalysisSessionController:
 
         self._state_callback: Optional[Callable[[AnalysisPanelState], None]] = None
         self._payload_callback: Optional[Callable[[Dict[str, object]], None]] = None
+
+    @staticmethod
+    def _normalize_display_name(name: Optional[str]) -> str:
+        if not name:
+            return ""
+        cleaned = re.sub(r"\s*\(\d+\)$", "", str(name)).strip()
+        if cleaned:
+            return cleaned
+        return str(name).strip()
 
     # ------------------------------------------------------------------
     # Public API
@@ -307,7 +317,12 @@ class AnalysisSessionController:
             display_map: Dict[str, str] = {}
             for entry in entries or []:
                 key = str(entry.get("key") or entry.get("display_name") or entry.get("column_letter"))
-                display_name = str(entry.get("display_name") or key)
+                display_name_raw = str(entry.get("display_name") or key)
+                display_name = str(
+                    entry.get("normalized_display")
+                    or self._normalize_display_name(display_name_raw)
+                    or display_name_raw
+                )
                 meta = _ColumnMeta(
                     key=key,
                     display_name=display_name,
@@ -315,6 +330,8 @@ class AnalysisSessionController:
                 )
                 meta_map[key] = meta
                 display_map[display_name] = key
+                if display_name != display_name_raw and display_name_raw not in display_map:
+                    display_map[display_name_raw] = key
             self._target_meta_by_key[sheet] = meta_map
             self._target_key_by_display[sheet] = display_map
 
@@ -323,7 +340,12 @@ class AnalysisSessionController:
             display_map: Dict[str, str] = {}
             for entry in entries or []:
                 key = str(entry.get("key") or entry.get("display_name") or entry.get("column_letter"))
-                display_name = str(entry.get("display_name") or key)
+                display_name_raw = str(entry.get("display_name") or key)
+                display_name = str(
+                    entry.get("normalized_display")
+                    or self._normalize_display_name(display_name_raw)
+                    or display_name_raw
+                )
                 meta = _ColumnMeta(
                     key=key,
                     display_name=display_name,
@@ -331,6 +353,8 @@ class AnalysisSessionController:
                 )
                 meta_map[key] = meta
                 display_map[display_name] = key
+                if display_name != display_name_raw and display_name_raw not in display_map:
+                    display_map[display_name_raw] = key
             self._source_meta_by_key[sheet] = meta_map
             self._source_key_by_display[sheet] = display_map
 

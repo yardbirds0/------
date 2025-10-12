@@ -44,12 +44,16 @@ class PromptBubble(QWidget):
 
         self.group_label = QLabel()
         self.group_label.setFont(FONTS["subtitle"])
-        self.group_label.setStyleSheet(f"color: {COLORS['accent_blue']};")
+        self.group_label.setStyleSheet(
+            f"color: {COLORS['accent_blue']}; background: transparent;"
+        )
         layout.addWidget(self.group_label)
 
         self.content_label = QLabel()
         self.content_label.setFont(FONTS["body_small"])
-        self.content_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
+        self.content_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; background: transparent;"
+        )
         self.content_label.setWordWrap(False)
         self.content_label.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Preferred
@@ -69,6 +73,9 @@ class PromptBubble(QWidget):
             }}
             QWidget#promptBubble:hover {{
                 background-color: {COLORS['bg_hover']};
+            }}
+            QWidget#promptBubble QLabel {{
+                background: transparent;
             }}
             """
         )

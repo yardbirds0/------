@@ -2,14 +2,14 @@
   "version": "1.0",
   "_security_warning": "API keys are stored in plain text. Protect this file's permissions.",
   "current_provider": "google",
-  "current_model": "gemini-2.5-flash-preview-09-2025",
+  "current_model": "gemini-2.5-pro",
   "providers": [
     {
       "id": "google",
       "name": "Google",
       "icon": "google.png",
       "enabled": true,
-      "api_key": "UFXLzCFM2BtvfvAc1ZC5zRkJLPJKvFlKeBKYfI5evJNqMO7t",
+      "api_key": "sk-UFXLzCFM2BtvfvAc1ZC5zRkJLPJKvFlKeBKYfI5evJNqMO7t",
       "api_url": "https://api.kkyyxx.xyz/v1",
       "website": "https://ai.google.dev",
       "models": [

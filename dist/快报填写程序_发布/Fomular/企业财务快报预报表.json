@@ -1,0 +1,180 @@
+{
+  "version": 1,
+  "sheet_name": "企业财务快报预报表",
+  "generated_at": "2025-10-11T12:48:29+08:00",
+  "entries": [
+    {
+      "target_name": "营业总收入",
+      "column_display": "本月数",
+      "column_key": "本月数",
+      "formula": "[利润表]![一、营业总收入]![本期金额]",
+      "confidence": 1.0,
+      "reasoning": "直接从利润表中的'一、营业总收入'项目的'本期金额'列获取数据，两者期间匹配。"
+    },
+    {
+      "target_name": "营业总收入",
+      "column_display": "本年累计",
+      "column_key": "本年累计",
+      "formula": "[利润表]![一、营业总收入]![本年累计]",
+      "confidence": 1.0,
+      "reasoning": "直接从利润表中的'一、营业总收入'项目的'本年累计'列获取数据，两者期间匹配。"
+    },
+    {
+      "target_name": "营业总收入",
+      "column_display": "上年同期",
+      "column_key": "上年同期",
+      "formula": "[利润表]![一、营业总收入]![上年累计]",
+      "confidence": 1.0,
+      "reasoning": "直接从利润表中的'一、营业总收入'项目的'上年累计'列获取数据，此列反映了去年同期的累计值。"
+    },
+    {
+      "target_name": "销售费用",
+      "column_display": "本月数",
+      "column_key": "本月数",
+      "formula": "[利润表]![销售费用]![本期金额]",
+      "confidence": 1.0,
+      "reasoning": "直接从利润表中的'销售费用'项目的'本期金额'列获取数据，两者期间匹配。"
+    },
+    {
+      "target_name": "销售费用",
+      "column_display": "本年累计",
+      "column_key": "本年累计",
+      "formula": "[利润表]![销售费用]![本年累计]",
+      "confidence": 1.0,
+      "reasoning": "直接从利润表中的'销售费用'项目的'本年累计'列获取数据，两者期间匹配。"
+    },
+    {
+      "target_name": "销售费用",
+      "column_display": "上年同期",
+      "column_key": "上年同期",
+      "formula": "[利润表]![销售费用]![上年累计]",
+      "confidence": 1.0,
+      "reasoning": "直接从利润表中的'销售费用'项目的'上年累计'列获取数据，此列反映了去年同期的累计值。"
+    },
+    {
+      "target_name": "管理费用",
+      "column_display": "本月数",
+      "column_key": "本月数",
+      "formula": "[利润表]![管理费用]![本期金额]",
+      "confidence": 1.0,
+      "reasoning": "直接从利润表中的'管理费用'项目的'本期金额'列获取数据，两者期间匹配。"
+    },
+    {
+      "target_name": "管理费用",
+      "column_display": "本年累计",
+      "column_key": "本年累计",
+      "formula": "[利润表]![管理费用]![本年累计]",
+      "confidence": 1.0,
+      "reasoning": "直接从利润表中的'管理费用'项目的'本年累计'列获取数据，两者期间匹配。"
+    },
+    {
+      "target_name": "管理费用",
+      "column_display": "上年同期",
+      "column_key": "上年同期",
+      "formula": "[利润表]![管理费用]![上年累计]",
+      "confidence": 1.0,
+      "reasoning": "直接从利润表中的'管理费用'项目的'上年累计'列获取数据，此列反映了去年同期的累计值。"
+    },
+    {
+      "target_name": "研发费用",
+      "column_display": "本月数",
+      "column_key": "本月数",
+      "formula": "[利润表]![研发费用]![本期金额]",
+      "confidence": 1.0,
+      "reasoning": "直接从利润表中的'研发费用'项目的'本期金额'列获取数据，两者期间匹配。"
+    },
+    {
+      "target_name": "研发费用",
+      "column_display": "本年累计",
+      "column_key": "本年累计",
+      "formula": "[利润表]![研发费用]![本年累计]",
+      "confidence": 1.0,
+      "reasoning": "直接从利润表中的'研发费用'项目的'本年累计'列获取数据，两者期间匹配。"
+    },
+    {
+      "target_name": "研发费用",
+      "column_display": "上年同期",
+      "column_key": "上年同期",
+      "formula": "[利润表]![研发费用]![上年累计]",
+      "confidence": 1.0,
+      "reasoning": "直接从利润表中的'研发费用'项目的'上年累计'列获取数据，此列反映了去年同期的累计值。"
+    },
+    {
+      "target_name": "财务费用",
+      "column_display": "本月数",
+      "column_key": "本月数",
+      "formula": "[利润表]![财务费用]![本期金额]",
+      "confidence": 1.0,
+      "reasoning": "直接从利润表中的'财务费用'项目的'本期金额'列获取数据，两者期间匹配。"
+    },
+    {
+      "target_name": "财务费用",
+      "column_display": "本年累计",
+      "column_key": "本年累计",
+      "formula": "[利润表]![财务费用]![本年累计]",
+      "confidence": 1.0,
+      "reasoning": "直接从利润表中的'财务费用'项目的'本年累计'列获取数据，两者期间匹配。"
+    },
+    {
+      "target_name": "财务费用",
+      "column_display": "上年同期",
+      "column_key": "上年同期",
+      "formula": "[利润表]![财务费用]![上年累计]",
+      "confidence": 1.0,
+      "reasoning": "直接从利润表中的'财务费用'项目的'上年累计'列获取数据，此列反映了去年同期的累计值。"
+    },
+    {
+      "target_name": "利润总额",
+      "column_display": "本月数",
+      "column_key": "本月数",
+      "formula": "[利润表]![四、利润总额（亏损总额以“－”号填列）]![本期金额]",
+      "confidence": 1.0,
+      "reasoning": "直接从利润表中的'四、利润总额（亏损总额以“－”号填列）'项目的'本期金额'列获取数据，两者期间匹配。"
+    },
+    {
+      "target_name": "利润总额",
+      "column_display": "本年累计",
+      "column_key": "本年累计",
+      "formula": "[利润表]![四、利润总额（亏损总额以“－”号填列）]![本年累计]",
+      "confidence": 1.0,
+      "reasoning": "直接从利润表中的'四、利润总额（亏损总额以“－”号填列）'项目的'本年累计'列获取数据，两者期间匹配。"
+    },
+    {
+      "target_name": "利润总额",
+      "column_display": "上年同期",
+      "column_key": "上年同期",
+      "formula": "[利润表]![四、利润总额（亏损总额以“－”号填列）]![上年累计]",
+      "confidence": 1.0,
+      "reasoning": "直接从利润表中的'四、利润总额（亏损总额以“－”号填列）'项目的'上年累计'列获取数据，此列反映了去年同期的累计值。"
+    },
+    {
+      "target_name": "固定资产投资额",
+      "column_display": "本月数",
+      "column_key": "本月数",
+      "formula": "[现金流量表]![购建固定资产、无形资产和其他长期资产所支付的现金]![本期金额]",
+      "confidence": 1.0,
+      "reasoning": "该指标反映固定资产投资，直接取自现金流量表中'购建固定资产、无形资产和其他长期资产所支付的现金'的'本期金额'。"
+    },
+    {
+      "target_name": "固定资产投资额",
+      "column_display": "本年累计",
+      "column_key": "本年累计",
+      "formula": "[现金流量表]![购建固定资产、无形资产和其他长期资产所支付的现金]![本年累计]",
+      "confidence": 1.0,
+      "reasoning": "该指标反映固定资产投资，直接取自现金流量表中'购建固定资产、无形资产和其他长期资产所支付的现金'的'本年累计'。"
+    },
+    {
+      "target_name": "固定资产投资额",
+      "column_display": "上年同期",
+      "column_key": "上年同期",
+      "formula": "[现金流量表]![购建固定资产、无形资产和其他长期资产所支付的现金]![上年同期]",
+      "confidence": 1.0,
+      "reasoning": "该指标反映固定资产投资，直接取自现金流量表中'购建固定资产、无形资产和其他长期资产所支付的现金'的'上年同期'。"
+    }
+  ],
+  "metadata": {
+    "source": "manual_import",
+    "imported_from": "D:/Code/快报填写程序/企业财务快报预报表.json",
+    "timestamp": "2025-10-11T12:48:29+08:00"
+  }
+}

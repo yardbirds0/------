@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont
 
 from models.data_models import PromptTemplate, TokenUsageInfo
+from models import AnalysisPanelState
 from .styles.cherry_theme import COLORS, FONTS, SIZES, SPACING, get_global_stylesheet
 from .widgets.title_bar import CherryTitleBar
 from .widgets.message_area import MessageArea
@@ -43,6 +44,8 @@ class CherryMainWindow(QWidget):
         self._is_generating = False
         self._request_preview_state: Optional[RequestPreviewState] = None
         self._preview_dialog: Optional[RequestPreviewDialog] = None
+        self._analysis_preview_text: Optional[str] = None
+        self._analysis_preview_dialog: Optional[RequestPreviewDialog] = None
 
         self._setup_window()
         self._setup_ui()
@@ -101,6 +104,8 @@ class CherryMainWindow(QWidget):
         # 侧边栏
         self.sidebar = CherrySidebar()
         content_layout.addWidget(self.sidebar)
+        # 初始化分析面板为空态
+        self.sidebar.update_analysis_state(AnalysisPanelState())
 
         main_layout.addWidget(content_area, stretch=1)
 
@@ -134,6 +139,7 @@ class CherryMainWindow(QWidget):
         self.sidebar.manage_chats_requested.connect(self._on_manage_chats)
         self.sidebar.parameter_changed.connect(self._on_parameter_changed)  # 处理单个参数变化
         self.sidebar.debug_panel_clicked.connect(self._on_debug_panel_clicked)
+        self.sidebar.analysis_debug_panel_clicked.connect(self._on_analysis_debug_panel_clicked)
 
     def _on_parameter_changed(self, param_name: str, value):
         """
@@ -371,12 +377,36 @@ class CherryMainWindow(QWidget):
         if self._preview_dialog:
             self._preview_dialog.set_preview(state)
 
+    def update_analysis_preview(self, text: str, *, is_placeholder: bool) -> None:
+        """更新表格分析请求预览并缓存最新文本。"""
+
+        self._analysis_preview_text = None if is_placeholder else text
+        self.sidebar.update_analysis_preview(text, is_placeholder=is_placeholder)
+
+        if self._analysis_preview_dialog:
+            placeholder = "暂无表格分析请求"
+            if is_placeholder:
+                self._analysis_preview_dialog.set_text_content("", placeholder=placeholder)
+            else:
+                self._analysis_preview_dialog.set_text_content(text, placeholder=placeholder)
+
     def _on_debug_panel_clicked(self) -> None:
         if self._preview_dialog is None:
             self._preview_dialog = RequestPreviewDialog(self)
         self._preview_dialog.set_preview(self._request_preview_state)
         self._preview_dialog.show()
         self._preview_dialog.raise_()
+
+    def _on_analysis_debug_panel_clicked(self) -> None:
+        if self._analysis_preview_dialog is None:
+            self._analysis_preview_dialog = RequestPreviewDialog(self)
+        placeholder = "暂无表格分析请求"
+        if self._analysis_preview_text:
+            self._analysis_preview_dialog.set_text_content(self._analysis_preview_text, placeholder=placeholder)
+        else:
+            self._analysis_preview_dialog.set_text_content("", placeholder=placeholder)
+        self._analysis_preview_dialog.show()
+        self._analysis_preview_dialog.raise_()
 
 
 # ==================== 测试代码 ====================

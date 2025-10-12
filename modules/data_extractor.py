@@ -50,13 +50,19 @@ class DataExtractor:
             return {"table_schemas": {}}
 
     def extract_all_data(self) -> bool:
-        """提取所有数据"""
+        """提取所有数据（支持单文件和多文件模式）"""
         try:
             print("开始提取表格数据...")
 
-            # 加载Excel文件
-            if not self._load_workbook():
-                return False
+            # 检查是否为多文件模式
+            if self.workbook_manager.is_multi_file_mode:
+                # 多文件模式：从多个文件提取
+                if not self._load_multiple_workbooks():
+                    return False
+            else:
+                # 单文件模式：原有逻辑
+                if not self._load_workbook():
+                    return False
 
             # 提取快报表目标项
             target_count = self._extract_flash_report_targets()
@@ -82,7 +88,7 @@ class DataExtractor:
             return False
 
     def _load_workbook(self) -> bool:
-        """加载Excel工作簿"""
+        """加载Excel工作簿（单文件模式）"""
         try:
             if not self.workbook_manager.file_path or not os.path.exists(self.workbook_manager.file_path):
                 print("Excel文件不存在")
@@ -96,8 +102,20 @@ class DataExtractor:
             print(f"Excel文件加载失败: {e}")
             return False
 
+    def _load_multiple_workbooks(self) -> bool:
+        """加载多个Excel工作簿（多文件模式）"""
+        try:
+            # 在多文件模式下，我们需要按需加载每个文件的sheet
+            # 这里不加载实际工作簿，而是在提取每个sheet时动态加载
+            print(f"多文件模式: {len(self.workbook_manager.source_files)} 个文件")
+            return True
+
+        except Exception as e:
+            print(f"多文件模式初始化失败: {e}")
+            return False
+
     def _extract_flash_report_targets(self) -> int:
-        """提取快报表目标项（保持原有逻辑）"""
+        """提取快报表目标项（支持多文件模式）"""
         target_count = 0
 
         # 重置目标列元数据
@@ -107,11 +125,11 @@ class DataExtractor:
             sheet_name = self._get_sheet_name(sheet_item)
             print(f"\n提取快报表 '{sheet_name}' 的目标项...")
 
-            if sheet_name not in self.workbook.sheetnames:
+            # 获取sheet（支持多文件模式）
+            sheet = self._get_sheet(sheet_name)
+            if not sheet:
                 print(f"  工作表 '{sheet_name}' 不存在")
                 continue
-
-            sheet = self.workbook[sheet_name]
 
             table_schema = self.schema_analyzer.analyze_table_schema(sheet)
             print(f"  表头起始行: {table_schema.header_start_row}, 列头行数: {table_schema.header_rows}")
@@ -129,7 +147,7 @@ class DataExtractor:
         return target_count
 
     def _extract_data_source_items_enhanced(self) -> int:
-        """提取数据源项（增强版）"""
+        """提取数据源项（增强版，支持多文件模式）"""
         source_count = 0
 
         # 重置列元数据
@@ -140,11 +158,11 @@ class DataExtractor:
             sheet_name = self._get_sheet_name(sheet_item)
             print(f"\n提取数据源表 '{sheet_name}' 的来源项...")
 
-            if sheet_name not in self.workbook.sheetnames:
+            # 获取sheet（支持多文件模式）
+            sheet = self._get_sheet(sheet_name)
+            if not sheet:
                 print(f"  工作表 '{sheet_name}' 不存在")
                 continue
-
-            sheet = self.workbook[sheet_name]
 
             # 分析表格模式
             print(f"  分析表格模式...")
@@ -221,10 +239,7 @@ class DataExtractor:
                         value = text_value
 
                 if value is None or value == "":
-                    if meta and meta.get("is_data_column", False):
-                        value_to_store = 0.0
-                    else:
-                        value_to_store = ""
+                    value_to_store = ""
                 else:
                     value_to_store = value
 
@@ -261,76 +276,103 @@ class DataExtractor:
         return sources
 
     def _extract_general_sources(self, sheet, sheet_name: str, schema: TableSchema) -> List[SourceItem]:
-        """提取通用表格来源项"""
-        sources = []
+        """提取通用表格来源项（支持双栏表格拆分与列头去重）"""
+        sources: List[SourceItem] = []
 
         print(f"    使用通用表格提取逻辑")
 
-        # 扫描所有数据行（移除行数限制）
-        max_row = sheet.max_row or 2000  # 增加默认上限
+        max_row = sheet.max_row or 2000
+        column_map = self.sheet_column_map.get(sheet_name, {})
 
         for row_num in range(schema.data_start_row, max_row + 1):
-            # 提取项目名称
-            item_name = None
+            name_cells: List[Tuple[int, str]] = []
             for name_col in schema.name_columns:
+                if name_col <= 0 or name_col > (sheet.max_column or 0):
+                    continue
                 cell = sheet.cell(row=row_num, column=name_col)
-                if cell.value and str(cell.value).rstrip():  # 只删除尾部空白，保留前导缩进
-                    item_name = str(cell.value).rstrip()  # 保留前导缩进
-                    break
+                if cell.value and str(cell.value).rstrip():
+                    name_cells.append((name_col, str(cell.value).rstrip()))
 
-            if not item_name:
+            if not name_cells:
                 continue
 
-            item_info = self._analyze_target_item_text(item_name)
-            clean_name = item_info['clean_name'] if item_info else item_name.strip()
-            raw_level = int(item_info['level']) if item_info else 0
-            display_index = item_info['numbering'] if item_info else ""
-
-            # 提取所有数据列
-            data_columns: Dict[str, Any] = {}
-            column_details: Dict[str, Dict[str, Any]] = {}
-            main_value: Optional[float] = None
-            column_map = self.sheet_column_map.get(sheet_name, {})
+            name_cells.sort(key=lambda item: item[0])
+            column_groups: Dict[int, List[Any]] = {idx: [] for idx in range(len(name_cells))}
 
             for col_info in schema.data_columns:
-                meta = column_map.get(col_info.column_index)
-                if not meta:
+                owner_index = self._resolve_column_owner(col_info.column_index, name_cells)
+                if owner_index is None:
+                    continue
+                column_groups.setdefault(owner_index, []).append(col_info)
+
+            for instance_index, (name_col_index, item_name) in enumerate(name_cells):
+                item_info = self._analyze_target_item_text(item_name)
+                clean_name = item_info['clean_name'] if item_info else item_name.strip()
+                raw_level = int(item_info['level']) if item_info else 0
+                display_index = item_info['numbering'] if item_info else ""
+
+                data_columns: Dict[str, Any] = {}
+                column_details: Dict[str, Dict[str, Any]] = {}
+                main_value: Optional[float] = None
+                grouped_columns = column_groups.get(instance_index, [])
+
+                for col_info in grouped_columns:
+                    meta = column_map.get(col_info.column_index)
+                    if not meta:
+                        continue
+
+                    cell = sheet.cell(row=row_num, column=col_info.column_index)
+                    value: Optional[Any] = None
+
+                    if meta.get("is_data_column") and self._is_data_cell(cell):
+                        value = self._extract_cell_value(cell)
+
+                    if value is None or value == "":
+                        text_value = self._extract_text_value(cell)
+                        if text_value is not None and text_value != "":
+                            value = text_value
+
+                    if value is None or value == "":
+                        value_to_store = ""
+                    else:
+                        value_to_store = value
+
+                    display_name = meta.get("display_name") or self._generate_column_key(col_info, sheet_name)
+                    normalized_display = meta.get("normalized_display") or self._normalize_display_name(display_name)
+                    if not normalized_display:
+                        normalized_display = self._normalize_display_name(display_name) or display_name
+
+                    should_store = normalized_display not in data_columns
+                    if not should_store:
+                        existing_value = data_columns.get(normalized_display)
+                        if (
+                            self._is_meaningful_value(value_to_store)
+                            and not self._is_meaningful_value(existing_value)
+                        ):
+                            should_store = True
+                        elif (
+                            isinstance(value_to_store, (int, float))
+                            and isinstance(existing_value, (int, float))
+                            and existing_value == 0
+                            and value_to_store != existing_value
+                        ):
+                            should_store = True
+
+                    if should_store:
+                        data_columns[normalized_display] = value_to_store
+                        column_details[normalized_display] = meta
+
+                        if (
+                            meta
+                            and meta.get("is_data_column")
+                            and isinstance(value_to_store, (int, float))
+                            and main_value is None
+                        ):
+                            main_value = float(value_to_store)
+
+                if not data_columns:
                     continue
 
-                cell = sheet.cell(row=row_num, column=col_info.column_index)
-                value: Optional[Any] = None
-
-                # 先尝试提取数值
-                if meta.get("is_data_column") and self._is_data_cell(cell):
-                    value = self._extract_cell_value(cell)
-
-                # 如果没有数值，尝试提取文本（确保文本列也能被提取）
-                if value is None or value == "":
-                    text_value = self._extract_text_value(cell)
-                    if text_value is not None and text_value != "":
-                        value = text_value
-
-                if value is None or value == "":
-                    if meta and meta.get("is_data_column", False):
-                        value_to_store = 0.0
-                    else:
-                        value_to_store = ""
-                else:
-                    value_to_store = value
-
-                display_name = meta.get("display_name") or self._generate_column_key(col_info, sheet_name)
-                data_columns[display_name] = value_to_store
-                column_details[display_name] = meta
-
-                if (
-                    meta
-                    and meta.get("is_data_column")
-                    and main_value is None
-                    and isinstance(value_to_store, (int, float))
-                ):
-                    main_value = float(value_to_store)
-
-            if data_columns:
                 source = self._create_enhanced_source_item(
                     sheet_name=sheet_name,
                     account_name=clean_name,
@@ -342,9 +384,16 @@ class DataExtractor:
                     table_type=schema.table_type.value,
                     original_text=item_name,
                     raw_level=raw_level,
-                    display_index=display_index
+                    display_index=display_index,
+                    row_instance_index=instance_index,
                 )
                 source.column_info.update(column_details)
+
+                line_number = self._extract_line_number_from_columns(data_columns)
+                if line_number is None and display_index and display_index.isdigit():
+                    line_number = int(display_index)
+                source.line_number = line_number
+
                 sources.append(source)
 
         self._assign_general_source_hierarchy(sources)
@@ -468,11 +517,19 @@ class DataExtractor:
         original_text: str = "",
         raw_level: int = 0,
         display_index: str = "",
+        row_instance_index: int = 0,
     ) -> SourceItem:
         """创建增强的来源项"""
 
         # 生成唯一ID
-        source_id = f"{sheet_name}_{account_code}_{row_num}" if account_code else f"{sheet_name}_{row_num}"
+        if account_code:
+            base_id = f"{sheet_name}_{account_code}_{row_num}"
+        else:
+            base_id = f"{sheet_name}_{row_num}"
+
+        source_id = base_id
+        if row_instance_index > 0:
+            source_id = f"{base_id}_{row_instance_index + 1}"
 
         # 创建基本的SourceItem
         source = SourceItem(
@@ -529,16 +586,18 @@ class DataExtractor:
                 used_keys[key] = 1
 
             base_display = info.display_name or info.header_text or f"列{info.column_letter}"
+            normalized_display = self._normalize_display_name(base_display) or base_display
             display = base_display
-            if display in used_display:
-                used_display[display] += 1
-                display = f"{base_display} ({used_display[base_display]})"
-            else:
-                used_display[display] = 1
+            display_counter_key = normalized_display or base_display
+            count = used_display.get(display_counter_key, 0)
+            if count > 0:
+                display = f"{base_display} ({count + 1})"
+            used_display[display_counter_key] = count + 1
 
             meta_entry = {
                 "key": key,
                 "display_name": display,
+                "normalized_display": normalized_display,
                 "column_index": info.column_index,
                 "column_letter": info.column_letter,
                 "primary_header": info.primary_header,
@@ -596,6 +655,77 @@ class DataExtractor:
             return col_info.normalized_key
 
         return f"列{col_info.column_letter}"
+
+    def _normalize_display_name(self, name: Optional[str]) -> str:
+        """标准化列头展示名称，移除重复序号等后缀"""
+        if not name:
+            return ""
+        normalized = re.sub(r"\s*\(\d+\)$", "", name).strip()
+        return normalized or name.strip()
+
+    def _resolve_column_owner(self, column_index: int, name_cells: List[Tuple[int, str]]) -> Optional[int]:
+        """根据列索引确定所属的项目索引"""
+        if column_index <= 0 or not name_cells:
+            return None
+
+        owner_index: Optional[int] = None
+        for idx, (name_col, _) in enumerate(name_cells):
+            if column_index < name_col:
+                break
+            owner_index = idx
+            if column_index == name_col:
+                return idx
+
+        if owner_index is not None:
+            return owner_index
+
+        return 0
+
+    def _is_meaningful_value(self, value: Any) -> bool:
+        """判断值是否具有实际意义（非空、非None）"""
+        if value is None:
+            return False
+        if isinstance(value, str):
+            return value.strip() != ""
+        return True
+
+    def _extract_line_number_from_columns(self, data_columns: Dict[str, Any]) -> Optional[int]:
+        """从列数据中提取行次信息"""
+        if not data_columns:
+            return None
+
+        for key, value in data_columns.items():
+            if not key:
+                continue
+            if "行次" in key or "行号" in key:
+                line_number = self._parse_line_number(value)
+                if line_number is not None:
+                    return line_number
+        return None
+
+    def _parse_line_number(self, value: Any) -> Optional[int]:
+        """解析行次值为整数"""
+        if value is None:
+            return None
+
+        if isinstance(value, (int, float)):
+            try:
+                number = int(value)
+                return number if number >= 0 else None
+            except (TypeError, ValueError):
+                return None
+
+        if isinstance(value, str):
+            cleaned = re.sub(r"[^\d\-]", "", value)
+            if not cleaned:
+                return None
+            try:
+                number = int(cleaned)
+                return number if number >= 0 else None
+            except (TypeError, ValueError):
+                return None
+
+        return None
 
     def _get_parent_account_code(self, account_code: str) -> str:
         """获取父级科目代码"""
@@ -873,6 +1003,51 @@ class DataExtractor:
             return str(sheet_item.name)
         else:
             return str(sheet_item)
+
+    def _get_sheet(self, sheet_name: str):
+        """
+        获取工作表（支持单文件和多文件模式）
+
+        Args:
+            sheet_name: 工作表名称
+
+        Returns:
+            worksheet对象，如果不存在返回None
+        """
+        if self.workbook_manager.is_multi_file_mode:
+            # 多文件模式：从sheet_file_mapping找到对应文件，然后加载
+            file_path = self.workbook_manager.sheet_file_mapping.get(sheet_name)
+            if not file_path:
+                return None
+
+            try:
+                # 动态加载对应的文件
+                wb = openpyxl.load_workbook(file_path, data_only=True)
+
+                # 找到原始sheet名称（可能经过重命名处理）
+                # 简单情况：直接查找同名sheet
+                if sheet_name in wb.sheetnames:
+                    return wb[sheet_name]
+
+                # 处理重命名情况：如果sheet_name有后缀（如"利润表_1"），去掉后缀
+                base_name = re.sub(r'_\d+$', '', sheet_name)
+                if base_name in wb.sheetnames:
+                    return wb[base_name]
+
+                # 如果还找不到，返回第一个sheet（通常单sheet文件）
+                if wb.sheetnames:
+                    return wb[wb.sheetnames[0]]
+
+                return None
+
+            except Exception as e:
+                print(f"  加载文件失败 {file_path}: {e}")
+                return None
+        else:
+            # 单文件模式：从已加载的workbook获取
+            if self.workbook and sheet_name in self.workbook.sheetnames:
+                return self.workbook[sheet_name]
+            return None
 
 if __name__ == "__main__":
     # 测试用例

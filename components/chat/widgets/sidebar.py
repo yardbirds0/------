@@ -15,6 +15,7 @@ from .settings_panel import CherrySettingsPanel
 from .tab_bar import CherryTabBar
 from .session_list_panel import SessionListPanel
 from .debug_panel import CherryDebugPanel
+from .analysis_panel import AnalysisPanel
 
 
 class CherrySidebar(QWidget):
@@ -26,6 +27,14 @@ class CherrySidebar(QWidget):
     # 信号定义
     parameter_changed = Signal(str, object)
     debug_panel_clicked = Signal()
+
+    analysis_target_sheet_changed = Signal(str)
+    analysis_target_column_toggled = Signal(str, bool)
+    analysis_source_column_toggled = Signal(str, str, bool)
+    analysis_apply_requested = Signal()
+    analysis_auto_parse_requested = Signal()  # 一键解析信号
+    analysis_export_json_requested = Signal()  # 导出JSON信号
+    analysis_debug_panel_clicked = Signal()
 
     # 会话相关信号（新）
     session_selected = Signal(str)  # session_id
@@ -58,6 +67,7 @@ class CherrySidebar(QWidget):
         # ==================== TAB导航栏 ====================
         self.tab_bar = CherryTabBar()
         self.tab_bar.add_tab("sessions", "对话")
+        self.tab_bar.add_tab("analysis", "分析")
         self.tab_bar.add_tab("settings", "AI参数设置")
         self.tab_bar.add_tab("debug", "调试")
         self.tab_bar.set_active_tab("sessions")  # 默认选中"对话"
@@ -70,11 +80,15 @@ class CherrySidebar(QWidget):
         self.session_list_panel = SessionListPanel()
         self.panel_stack.addWidget(self.session_list_panel)
 
-        # 2. AI参数设置面板
+        # 2. 分析面板
+        self.analysis_panel = AnalysisPanel()
+        self.panel_stack.addWidget(self.analysis_panel)
+
+        # 3. AI参数设置面板
         self.settings_panel = CherrySettingsPanel()
         self.panel_stack.addWidget(self.settings_panel)
 
-        # 3. 调试面板
+        # 4. 调试面板
         self.debug_panel = CherryDebugPanel()
         self.panel_stack.addWidget(self.debug_panel)
 
@@ -123,6 +137,13 @@ class CherrySidebar(QWidget):
         # 设置面板信号
         self.settings_panel.parameter_changed.connect(self.parameter_changed.emit)
         self.debug_panel.panel_clicked.connect(self.debug_panel_clicked.emit)
+        self.analysis_panel.target_sheet_changed.connect(self.analysis_target_sheet_changed.emit)
+        self.analysis_panel.target_column_toggled.connect(self.analysis_target_column_toggled.emit)
+        self.analysis_panel.source_column_toggled.connect(self.analysis_source_column_toggled.emit)
+        self.analysis_panel.apply_requested.connect(self.analysis_apply_requested.emit)
+        self.analysis_panel.auto_parse_requested.connect(self.analysis_auto_parse_requested.emit)  # 一键解析信号连接
+        self.analysis_panel.export_json_requested.connect(self.analysis_export_json_requested.emit)  # 导出JSON信号连接
+        self.debug_panel.analysis_panel_clicked.connect(self.analysis_debug_panel_clicked.emit)
 
         # 会话列表面板信号
         self.session_list_panel.session_selected.connect(self.session_selected.emit)
@@ -140,10 +161,12 @@ class CherrySidebar(QWidget):
 
         if tab_id == "sessions":
             self.panel_stack.setCurrentIndex(0)
-        elif tab_id == "settings":
+        elif tab_id == "analysis":
             self.panel_stack.setCurrentIndex(1)
-        elif tab_id == "debug":
+        elif tab_id == "settings":
             self.panel_stack.setCurrentIndex(2)
+        elif tab_id == "debug":
+            self.panel_stack.setCurrentIndex(3)
 
     def show_sessions_tab(self):
         """显示对话TAB"""
@@ -152,6 +175,10 @@ class CherrySidebar(QWidget):
     def show_settings_tab(self):
         """显示设置TAB"""
         self.tab_bar.set_active_tab("settings")
+
+    def show_analysis_tab(self):
+        """显示分析TAB"""
+        self.tab_bar.set_active_tab("analysis")
 
     def show_debug_tab(self):
         """显示调试TAB"""
@@ -180,7 +207,12 @@ class CherrySidebar(QWidget):
     def update_debug_preview(self, text: str, *, is_placeholder: bool) -> None:
         """更新调试面板中的请求预览文本。"""
 
-        self.debug_panel.set_preview_text(text, is_placeholder=is_placeholder)
+        self.debug_panel.set_chat_preview(text, is_placeholder=is_placeholder)
+
+    def update_analysis_preview(self, text: str, *, is_placeholder: bool) -> None:
+        """更新分析请求预览文本。"""
+
+        self.debug_panel.set_analysis_preview(text, is_placeholder=is_placeholder)
 
     def set_parameter(self, param_name: str, value):
         """设置单个参数"""
@@ -209,6 +241,16 @@ class CherrySidebar(QWidget):
     def clear_session_selection(self):
         """清除会话选中状态"""
         self.session_list_panel.clear_selection()
+
+    # ==================== 分析面板方法 ====================
+
+    def update_analysis_state(self, state):
+        """更新分析TAB的展示内容"""
+        self.analysis_panel.set_state(state)
+
+    def set_analysis_enabled(self, enabled: bool):
+        """启用或禁用分析TAB交互"""
+        self.analysis_panel.block_interactions(not enabled)
 
 
 # ==================== 测试代码 ====================

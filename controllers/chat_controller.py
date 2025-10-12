@@ -7,8 +7,10 @@ Chat Controller
 import logging
 import time
 import json
+import re
 from datetime import datetime
-from typing import List, Optional, Tuple, Dict, Any
+from pathlib import Path
+from typing import List, Optional, Tuple, Dict, Any, TYPE_CHECKING
 from PySide6.QtCore import QObject, Slot
 from PySide6.QtWidgets import QMessageBox
 from modules.ai_integration import (
@@ -17,7 +19,9 @@ from modules.ai_integration import (
 )
 from modules.ai_integration.api_providers.base_provider import ProviderError
 from modules.ai_integration.prompt_store import PromptStore
+from models import AnalysisPanelState
 from models.data_models import PromptTemplate, TokenUsageInfo
+from .analysis_session_controller import AnalysisSessionController
 from .request_preview_service import RequestPreviewService, RequestPreviewState
 # 使用新的Cherry Studio组件
 from components.chat import CherryMainWindow
@@ -25,11 +29,15 @@ from components.chat.dialogs.prompt_editor_dialog import PromptEditorDialog
 # 导入数据库管理器
 from data.chat.db_manager import ChatDatabaseManager
 
+if TYPE_CHECKING:  # pragma: no cover
+    from main import MainWindow
+
 logger = logging.getLogger(__name__)
 
 # ==================== 常量定义 ====================
 SESSION_TITLE_MAX_LENGTH = 10  # 会话标题最大字符数
 SESSION_RETENTION_DAYS = 90  # 会话保留天数
+MAPPING_KEY_PATTERN = re.compile(r"\[(?P<item>.+?)\]!\[(?P<column>.+?)\]")
 
 
 class ChatController(QObject):
@@ -68,6 +76,19 @@ class ChatController(QObject):
         self.request_preview_service = RequestPreviewService()
         self._preview_initialized = False
         self._last_stream_usage_payload: Optional[Dict[str, Any]] = None
+
+        # 分析面板控制器
+        self.analysis_controller = AnalysisSessionController(Path(".cache") / "analysis_session")
+        self.analysis_controller.set_callbacks(
+            on_state_change=self._on_analysis_state_changed,
+            on_payload_change=self._on_analysis_payload_changed,
+        )
+        self._analysis_panel_state: AnalysisPanelState = AnalysisPanelState()
+        self._analysis_preview_text: Optional[str] = None
+        self._analysis_payload_json: Optional[str] = None
+
+        # 一键解析状态标志
+        self._auto_parse_pending = False  # 是否在等待AI回复后自动解析
 
     def initialize(self, config: ProviderConfig):
         """
@@ -129,6 +150,290 @@ class ChatController(QObject):
             logger.error(f"数据库初始化失败: {e}")
             self.db_manager = None  # 确保失败时设为None
 
+    def update_analysis_context(
+        self,
+        workbook_manager,
+        *,
+        current_sheet: Optional[str] = None,
+        target_column_config: Optional[List[Dict[str, Any]]] = None,
+        source_column_configs: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    ) -> None:
+        """由主界面调用，用于同步最新的工作簿与列配置。"""
+        self.analysis_controller.sync_context(
+            workbook_manager,
+            current_sheet=current_sheet,
+            target_column_config=target_column_config,
+            source_column_configs=source_column_configs,
+        )
+
+    def _push_analysis_state_to_ui(self) -> None:
+        if not self.chat_window:
+            return
+        self.chat_window.sidebar.update_analysis_state(self._analysis_panel_state)
+        if self._analysis_preview_text:
+            self.chat_window.update_analysis_preview(self._analysis_preview_text, is_placeholder=False)
+        else:
+            self.chat_window.update_analysis_preview("", is_placeholder=True)
+
+    def _set_analysis_preview_placeholder(self) -> None:
+        self._analysis_preview_text = None
+        self._analysis_payload_json = None
+        if self.chat_window:
+            self.chat_window.update_analysis_preview("", is_placeholder=True)
+
+    def _save_analysis_request_history(
+        self,
+        sheet_name: str,
+        payload: Dict[str, Any],
+        preview_text: str,
+    ) -> None:
+        """Persist analysis pre-send payload for auditing purposes."""
+        parent_window = self.parent()
+        file_manager = getattr(parent_window, "file_manager", None)
+        if not file_manager:
+            return
+
+        headers: Dict[str, Any] = {}
+        if self.provider and hasattr(self.provider, "headers"):
+            try:
+                headers = dict(getattr(self.provider, "headers", {}) or {})
+            except Exception:  # pragma: no cover - defensive
+                headers = {}
+
+        endpoint = getattr(self.provider, "base_url", None)
+        model_name = self.current_config.model if self.current_config else None
+
+        try:
+            file_manager.save_analysis_request_history(
+                sheet_name=sheet_name,
+                payload=payload,
+                prompt_text=preview_text,
+                headers=headers,
+                endpoint=endpoint,
+                model=model_name,
+                warnings=self.analysis_controller.get_latest_warnings(),
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Failed to save analysis request history: %s", exc)
+
+    def _export_formula_snapshot(
+        self,
+        sheet_name: str,
+        entries: List[Dict[str, Any]],
+        metadata: Dict[str, Any],
+    ) -> None:
+        parent_window = self.parent()
+        file_manager = getattr(parent_window, "file_manager", None)
+        if not file_manager or not entries:
+            return
+        try:
+            file_manager.export_formula_snapshot(
+                sheet_name=sheet_name,
+                entries=entries,
+                metadata=metadata,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Failed to export formula snapshot: %s", exc)
+
+    @staticmethod
+    def _make_json_safe(value: Any) -> Any:
+        """确保对象可序列化为 JSON。"""
+        try:
+            json.dumps(value, ensure_ascii=False)
+            return value
+        except TypeError:
+            if isinstance(value, dict):
+                return {
+                    str(key): ChatController._make_json_safe(val)
+                    for key, val in value.items()
+                }
+            if isinstance(value, (list, tuple, set)):
+                return [ChatController._make_json_safe(item) for item in value]
+            return str(value)
+
+    def _alert_user(self, message: str, title: str = "提示") -> None:
+        if self.chat_window:
+            QMessageBox.information(self.chat_window, title, message)
+        else:
+            logger.info("%s: %s", title, message)
+
+    def _extract_analysis_mappings(self, raw_text: str) -> Optional[Dict[str, Dict[str, str]]]:
+        if not raw_text:
+            return None
+
+        candidates: List[str] = []
+        code_block = self._extract_json_from_code_block(raw_text)
+        if code_block:
+            candidates.append(code_block)
+
+        bracket_candidate = self._extract_json_bracket_block(raw_text)
+        if bracket_candidate:
+            candidates.append(bracket_candidate)
+
+        candidates.append(raw_text)
+
+        for candidate in candidates:
+            try:
+                data = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+
+            if not isinstance(data, dict):
+                continue
+
+            mappings = data.get("mappings")
+            if mappings is None:
+                continue
+
+            result: Dict[str, Dict[str, str]] = {}
+
+            if isinstance(mappings, dict):
+                for target_name, column_map in mappings.items():
+                    if isinstance(column_map, dict):
+                        nested: Dict[str, str] = {}
+                        for column_name, payload in column_map.items():
+                            if isinstance(payload, dict):
+                                formula = payload.get("formula")
+                            else:
+                                formula = payload
+                            if not formula:
+                                continue
+                            nested[str(column_name)] = str(formula)
+                        if nested:
+                            result[str(target_name)] = nested
+                    else:
+                        formula = (
+                            column_map.get("formula")
+                            if isinstance(column_map, dict)
+                            else column_map
+                        )
+                        if formula:
+                            result.setdefault(str(target_name), {})["__default__"] = str(formula)
+
+            elif isinstance(mappings, list):
+                for item in mappings:
+                    if not isinstance(item, dict):
+                        continue
+                    raw_key = item.get("target_name") or item.get("target_id") or ""
+                    column_display = item.get("column_display") or item.get("column") or item.get("column_name")
+                    formula = item.get("formula")
+                    if not formula:
+                        continue
+
+                    target_name: Optional[str] = None
+                    column_name: Optional[str] = column_display
+
+                    if item.get("target_name"):
+                        target_name = str(item.get("target_name"))
+                    else:
+                        split_target, split_column = self._split_analysis_mapping_key(str(raw_key))
+                        if split_target and split_column:
+                            target_name = split_target
+                            column_name = column_display or split_column
+                        elif split_target:
+                            target_name = split_target
+                            column_name = column_display or split_column or "__default__"
+                        else:
+                            target_name = str(raw_key)
+                            column_name = column_display or "__default__"
+
+                    if not target_name or not column_name:
+                        continue
+
+                    result.setdefault(target_name, {})[str(column_name)] = str(formula)
+
+            if result:
+                return result
+
+        return None
+
+    def _extract_json_from_code_block(self, text: str) -> Optional[str]:
+        if "```" not in text:
+            return None
+
+        segments = text.split("```")
+        for segment in segments:
+            stripped = segment.strip()
+            if not stripped:
+                continue
+            if stripped.lower().startswith("json"):
+                stripped = stripped[4:].strip()
+            if stripped.startswith("{") and stripped.endswith("}"):
+                return stripped
+        return None
+
+    def _extract_json_bracket_block(self, text: str) -> Optional[str]:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return None
+        return text[start : end + 1]
+
+    def _split_analysis_mapping_key(self, raw_key: str) -> Tuple[Optional[str], Optional[str]]:
+        if not raw_key:
+            return None, None
+        match = MAPPING_KEY_PATTERN.fullmatch(raw_key.strip())
+        if not match:
+            return None, None
+        return match.group("item").strip(), match.group("column").strip()
+
+    def _on_analysis_state_changed(self, state: AnalysisPanelState) -> None:
+        initial_warnings = self.analysis_controller.get_latest_warnings()
+        if hasattr(state, "warnings"):
+            state.warnings = list(initial_warnings)
+        self._analysis_panel_state = state
+
+        # 更新AI助手窗口的分析面板
+        if self.chat_window:
+            self.chat_window.sidebar.update_analysis_state(state)
+
+        # 同时更新主界面的分析面板（新增）
+        parent_window = self.parent()
+        if parent_window and hasattr(parent_window, 'main_analysis_panel'):
+            parent_window.main_analysis_panel.set_state(state)
+
+        has_selection = any(column.checked for column in state.target_columns)
+        if not state.has_workbook or not has_selection:
+            self._set_analysis_preview_placeholder()
+            return
+
+        # 生成最新的预览 payload
+        self.analysis_controller.build_payload()
+
+        updated_warnings = self.analysis_controller.get_latest_warnings()
+        if updated_warnings != initial_warnings:
+            if hasattr(state, "warnings"):
+                state.warnings = list(updated_warnings)
+            # 更新两个面板
+            if self.chat_window:
+                self.chat_window.sidebar.update_analysis_state(state)
+            if parent_window and hasattr(parent_window, 'main_analysis_panel'):
+                parent_window.main_analysis_panel.set_state(state)
+
+    def _on_analysis_payload_changed(self, payload: Dict[str, Any]) -> None:
+        if not payload or not payload.get("targets_to_map"):
+            self._set_analysis_preview_placeholder()
+            return
+
+        try:
+            raw_json = json.dumps(payload, ensure_ascii=False, indent=2)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Failed to serialize analysis payload: %s", exc)
+            raw_json = str(payload)
+
+        self._analysis_payload_json = raw_json
+
+        warnings = self.analysis_controller.get_latest_warnings()
+        if warnings:
+            warning_lines = "\n".join(f"- {warning}" for warning in warnings)
+            preview_text = f"⚠️ 标识符告警:\n{warning_lines}\n\n{raw_json}"
+        else:
+            preview_text = raw_json
+
+        self._analysis_preview_text = preview_text
+        if self.chat_window:
+            self.chat_window.update_analysis_preview(preview_text, is_placeholder=False)
+
     def show_chat_window(self):
         """显示对话窗口"""
         if not self.chat_window:
@@ -147,6 +452,12 @@ class ChatController(QObject):
             sidebar.session_selected.connect(self._on_session_selected)
             sidebar.session_delete_requested.connect(self._on_session_delete_requested)
             sidebar.new_session_requested.connect(self._on_new_session_requested)
+            sidebar.analysis_target_sheet_changed.connect(self.analysis_controller.handle_target_sheet_change)
+            sidebar.analysis_target_column_toggled.connect(self.analysis_controller.handle_target_column_toggle)
+            sidebar.analysis_source_column_toggled.connect(self.analysis_controller.handle_source_column_toggle)
+            sidebar.analysis_apply_requested.connect(self._on_analysis_apply_requested)
+            sidebar.analysis_auto_parse_requested.connect(self._on_analysis_auto_parse_requested)  # 一键解析信号连接
+            sidebar.analysis_export_json_requested.connect(self._on_analysis_export_json_requested)  # 导出JSON信号连接
 
             # 设置初始参数
             if self.current_parameters:
@@ -164,6 +475,7 @@ class ChatController(QObject):
             self._publish_preview_state(self.request_preview_service.placeholder_state())
         # 更新提示词显示
         self.chat_window.set_prompt_template(self.current_prompt)
+        self._push_analysis_state_to_ui()
 
         # 重置窗口打开标志
         self.window_just_opened = True
@@ -176,6 +488,206 @@ class ChatController(QObject):
         """隐藏对话窗口"""
         if self.chat_window:
             self.chat_window.hide()
+
+    def _on_analysis_auto_parse_requested(self) -> None:
+        """一键解析：预发送 → 自动发送 → 等待AI回复 → 自动解析应用"""
+        # 1. 执行预发送逻辑
+        payload = self.analysis_controller.build_payload()
+        if payload is None:
+            self._alert_user("没有可用的分析请求，请检查目标列与来源列的勾选。")
+            return
+
+        text = self._analysis_payload_json
+        if not text:
+            try:
+                text = json.dumps(payload, ensure_ascii=False, indent=2)
+            except Exception:
+                text = str(payload)
+            self._analysis_payload_json = text
+
+        sheet_name = self.analysis_controller.get_current_sheet_name()
+        if sheet_name:
+            self._save_analysis_request_history(sheet_name, payload, text)
+
+        if not self.chat_window:
+            return
+
+        # 2. 切换到对话TAB
+        self.chat_window.sidebar.show_sessions_tab()
+
+        # 3. 设置自动解析标志
+        self._auto_parse_pending = True
+
+        # 4. 锁定分析面板交互
+        self.chat_window.sidebar.set_analysis_enabled(False)
+
+        # 5. 自动发送消息
+        # 获取当前AI参数
+        ai_params = self.chat_window.sidebar.get_parameters() if self.chat_window else {}
+        self._on_user_message_sent(text, ai_params)
+
+    def _on_analysis_export_json_requested(self) -> None:
+        """导出JSON：先输出提示词，再输出请求payload"""
+        # 1. 生成payload
+        payload = self.analysis_controller.build_payload()
+        if payload is None:
+            self._alert_user("没有可用的分析请求，请检查目标列与来源列的勾选。")
+            return
+
+        # 2. 获取当前表名
+        sheet_name = self.analysis_controller.get_current_sheet_name()
+        if not sheet_name:
+            self._alert_user("请先选择待写入的目标表。")
+            return
+
+        # 3. 准备导出内容
+        export_data = {}
+
+        # 3.1 添加提示词部分
+        developer_content = (self.current_prompt.content or "").strip()
+        base_system_prompt = self.current_parameters.get(
+            'system_prompt',
+            "你是一个专业的财务数据分析助手。"
+        )
+
+        if developer_content:
+            if base_system_prompt:
+                combined_prompt = f"{base_system_prompt}\n\n{developer_content}"
+            else:
+                combined_prompt = developer_content
+            export_data["prompt"] = combined_prompt
+        elif base_system_prompt:
+            export_data["prompt"] = base_system_prompt
+
+        # 3.2 添加请求payload
+        export_data["request"] = payload
+
+        # 3.3 添加元数据
+        export_data["metadata"] = {
+            "sheet_name": sheet_name,
+            "export_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "model": self.current_config.model if self.current_config else "unknown"
+        }
+
+        # 4. 创建导出目录
+        from pathlib import Path
+        export_dir = Path("请求文件夹")
+        export_dir.mkdir(exist_ok=True)
+
+        # 5. 生成文件名: 表名+请求.json
+        filename = f"{sheet_name}+请求.json"
+        export_path = export_dir / filename
+
+        # 6. 写入文件
+        try:
+            with open(export_path, 'w', encoding='utf-8') as f:
+                json.dump(export_data, f, ensure_ascii=False, indent=2)
+
+            self._alert_user(f"JSON文件已成功导出到:\n{export_path}")
+            logger.info(f"导出JSON成功: {export_path}")
+
+        except Exception as e:
+            self._alert_user(f"导出JSON失败: {str(e)}", title="错误")
+            logger.error(f"导出JSON失败: {e}")
+
+    def _on_analysis_apply_requested(self) -> None:
+        """解析AI回复并尝试将公式应用到主界面。"""
+        sheet_name = self.analysis_controller.get_current_sheet_name()
+        if not sheet_name:
+            self._alert_user("请先选择待写入的目标表。")
+            return
+
+        if not self.chat_manager:
+            self._alert_user("当前对话为空，请先让 AI 返回映射结果。")
+            return
+
+        last_message = self.chat_manager.get_last_message()
+        if not last_message or last_message.role != "assistant":
+            self._alert_user("未找到可解析的 AI 回复，请先获取映射结果。")
+            return
+
+        mappings = self._extract_analysis_mappings(last_message.content or "")
+        if not mappings:
+            self._alert_user("AI 回复中未找到有效的映射结果。")
+            return
+
+        selected_columns = self.analysis_controller.get_selected_target_columns()
+        entries: List[Dict[str, Any]] = []
+
+        for target_name, column_map in mappings.items():
+            if not isinstance(column_map, dict):
+                column_map = {"__default__": column_map}
+
+            for column_display, mapping_info in column_map.items():
+                display_name = str(column_display)
+                if isinstance(mapping_info, dict):
+                    formula_text = str(mapping_info.get("formula", "")).strip()
+                    confidence_raw = mapping_info.get("confidence")
+                    reasoning_text = str(mapping_info.get("reasoning", "") or "").strip()
+                else:
+                    formula_text = str(mapping_info or "").strip()
+                    confidence_raw = None
+                    reasoning_text = ""
+
+                column_key = self.analysis_controller.resolve_target_column_key(display_name)
+                if not column_key:
+                    continue
+                if selected_columns and column_key not in selected_columns:
+                    continue
+                if not formula_text:
+                    continue
+
+                entry: Dict[str, Any] = {
+                    "target_name": str(target_name),
+                    "column_display": display_name,
+                    "column_key": column_key,
+                    "formula": formula_text,
+                }
+
+                try:
+                    if confidence_raw is not None:
+                        confidence_value = max(0.0, min(1.0, float(confidence_raw)))
+                        entry["confidence"] = confidence_value
+                except (TypeError, ValueError):
+                    pass
+
+                if reasoning_text:
+                    entry["reasoning"] = reasoning_text
+
+                entries.append(entry)
+
+        if not entries:
+            self._alert_user("映射结果与当前分析配置不匹配，请确认后重试。")
+            return
+
+        metadata: Dict[str, Any] = {
+            "source": "ai_analysis",
+            "assistant_message": last_message.content,
+            "raw_mappings": self._make_json_safe(mappings),
+            "model": self.current_config.model if self.current_config else None,
+        }
+        cached_payload = self.analysis_controller.get_cached_payload()
+        if cached_payload:
+            metadata["analysis_payload"] = self._make_json_safe(cached_payload)
+        if self._analysis_preview_text:
+            metadata["analysis_preview"] = self._analysis_preview_text
+
+        parent_window = self.parent()
+        if not parent_window or not hasattr(parent_window, "apply_analysis_formulas"):
+            logger.error("主窗口引用不存在或不支持 apply_analysis_formulas。")
+            self._alert_user("内部错误：无法访问主界面。", title="错误")
+            return
+
+        applied, total = parent_window.apply_analysis_formulas(sheet_name, entries)  # type: ignore[attr-defined]
+        metadata["applied_count"] = applied
+        metadata["total_entries"] = total
+        metadata["timestamp"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        self._export_formula_snapshot(sheet_name, entries, metadata)
+
+        if applied:
+            self._alert_user(f"已成功应用 {applied}/{total} 条映射公式。")
+        else:
+            self._alert_user("未能应用任何映射公式，请检查 AI 返回的内容。", title="提示")
 
     @Slot(str, dict)
     def _on_user_message_sent(self, message: str, ai_params: dict):
@@ -238,25 +750,21 @@ class ChatController(QObject):
             self.chat_window.show_typing_indicator()
             self.chat_window.hide_welcome_message()
 
-        # 获取上下文消息
-        context_messages = self.chat_manager.get_context_messages()
-
+        # 组装API消息列表
+        # 1. 获取提示词内容
         developer_content = (self.current_prompt.content or "").strip()
-        messages_for_api = []
-        if developer_content:
-            messages_for_api.append(ChatMessage(role='developer', content=developer_content))
-        messages_for_api.extend(context_messages)
 
-        # 获取系统提示词
+        # 2. 获取系统提示词
         base_system_prompt = self.current_parameters.get(
             'system_prompt',
             "你是一个专业的财务数据分析助手。"
         )
 
-        developer_content = (self.current_prompt.content or "").strip()
+        # 3. 构建messages数组
         messages_for_api = []
         system_prompt_for_api = base_system_prompt
 
+        # 先添加提示词（作为system消息）
         if developer_content:
             if base_system_prompt:
                 combined_prompt = f"{base_system_prompt}\n\n{developer_content}"
@@ -267,7 +775,7 @@ class ChatController(QObject):
             )
             system_prompt_for_api = None  # 避免重复的 system 消息
 
-        # 获取上下文消息
+        # 再添加历史消息
         context_messages = self.chat_manager.get_context_messages()
         messages_for_api.extend(context_messages)
 
@@ -409,6 +917,16 @@ class ChatController(QObject):
             self.chat_window.finish_streaming_message(token_usage=usage_info)
             self.chat_window.set_input_enabled(True)
 
+        # 检查是否需要自动解析应用
+        if self._auto_parse_pending:
+            self._auto_parse_pending = False
+            # 解锁分析面板
+            if self.chat_window:
+                self.chat_window.sidebar.set_analysis_enabled(True)
+            # 自动执行解析应用
+            self._on_analysis_apply_requested()
+            return  # 提前返回，避免重复更新UI
+
         # 更新调试信息
         if self.chat_window:
             if usage_info.status == "complete" and usage_info.has_all_tokens:
@@ -451,6 +969,12 @@ class ChatController(QObject):
         """
         logger.error(f"AI 响应错误: {error_msg}")
         self._last_stream_usage_payload = None
+
+        # 如果是一键解析过程中出错，解锁分析面板
+        if self._auto_parse_pending:
+            self._auto_parse_pending = False
+            if self.chat_window:
+                self.chat_window.sidebar.set_analysis_enabled(True)
 
         # 显示错误消息
         if self.chat_window:
@@ -503,6 +1027,16 @@ class ChatController(QObject):
         if self.chat_window:
             self.chat_window.add_assistant_message(response, token_usage=usage_info)
             self.chat_window.set_input_enabled(True)
+
+        # 检查是否需要自动解析应用
+        if self._auto_parse_pending:
+            self._auto_parse_pending = False
+            # 解锁分析面板
+            if self.chat_window:
+                self.chat_window.sidebar.set_analysis_enabled(True)
+            # 自动执行解析应用
+            self._on_analysis_apply_requested()
+            return  # 提前返回，避免重复更新UI
 
         # 更新调试信息
         if self.chat_window:

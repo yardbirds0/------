@@ -364,17 +364,30 @@ class CalculationEngine:
             # 准备写入的值
             values_to_write = {}
 
-            for target_id, formula in self.workbook_manager.mapping_formulas.items():
-                if formula.calculation_result is not None:
-                    target = self.workbook_manager.target_items.get(target_id)
-                    if target:
+            # 遍历嵌套字典结构: {target_id: {column_key: MappingFormula}}
+            for target_id, column_map in self.workbook_manager.mapping_formulas.items():
+                target = self.workbook_manager.target_items.get(target_id)
+                if not target:
+                    continue
+
+                # 遍历每个目标项的所有列公式
+                for column_key, formula in column_map.items():
+                    if formula.calculation_result is not None:
                         sheet_name = target.sheet_name
                         if sheet_name not in values_to_write:
                             values_to_write[sheet_name] = {}
 
-                        # 构建单元格地址
-                        # 假设目标项在第一列为名称，第二列为数值
-                        cell_address = f"B{target.row}"  # 简化处理，实际应该根据具体位置
+                        # 使用 target_cell_address 如果存在,否则根据列配置构建地址
+                        cell_address = getattr(target, 'target_cell_address', None)
+                        if not cell_address:
+                            # 尝试从列配置中获取列字母
+                            column_info = target.columns.get(column_key) if hasattr(target, 'columns') else None
+                            if column_info and hasattr(column_info, 'column_letter'):
+                                cell_address = f"{column_info.column_letter}{target.row}"
+                            else:
+                                # 默认使用 D 列（假设第4列是数值列）
+                                cell_address = f"D{target.row}"
+
                         values_to_write[sheet_name][cell_address] = formula.calculation_result
 
             # 写入每个工作表
@@ -432,17 +445,23 @@ class CalculationEngine:
         report_lines.append("公式详情:")
         report_lines.append("-" * 40)
 
-        for target_id, formula in self.workbook_manager.mapping_formulas.items():
+        # 遍历嵌套字典结构: {target_id: {column_key: MappingFormula}}
+        for target_id, column_map in self.workbook_manager.mapping_formulas.items():
             target = self.workbook_manager.target_items.get(target_id)
             if target:
                 report_lines.append(f"目标项: {target.name} ({target.sheet_name})")
-                report_lines.append(f"  公式: {formula.formula}")
-                report_lines.append(f"  状态: {formula.status.value}")
 
-                if formula.calculation_result is not None:
-                    report_lines.append(f"  结果: {formula.calculation_result}")
-                else:
-                    report_lines.append("  结果: 未计算")
+                # 遍历每个列的公式
+                for column_key, formula in column_map.items():
+                    column_display = formula.column_name or column_key
+                    report_lines.append(f"  列: {column_display}")
+                    report_lines.append(f"    公式: {formula.formula}")
+                    report_lines.append(f"    状态: {formula.status.value}")
+
+                    if formula.calculation_result is not None:
+                        report_lines.append(f"    结果: {formula.calculation_result}")
+                    else:
+                        report_lines.append("    结果: 未计算")
 
                 report_lines.append("")
 
@@ -528,27 +547,33 @@ class CalculationEngine:
         # 构建值映射
         value_map = self.build_value_map()
 
-        # 计算预览
-        for target_id, formula in formulas_to_preview.items():
+        # 计算预览 - 处理嵌套字典结构
+        for target_id, column_map in formulas_to_preview.items():
             target = self.workbook_manager.target_items.get(target_id)
 
-            preview_data = {
-                "target_name": target.name if target else "未知",
-                "formula": formula.formula,
-                "current_status": formula.status.value
-            }
+            # 为每个列公式创建预览
+            for column_key, formula in column_map.items():
+                preview_key = f"{target_id}#{column_key}"
+                column_display = formula.column_name or column_key
 
-            # 尝试计算（支持三段式）
-            success, result = evaluate_formula_with_values_three_segment(formula.formula, self.workbook_manager.source_items)
+                preview_data = {
+                    "target_name": target.name if target else "未知",
+                    "column": column_display,
+                    "formula": formula.formula,
+                    "current_status": formula.status.value
+                }
 
-            if success:
-                preview_data["preview_result"] = result
-                preview_data["can_calculate"] = True
-            else:
-                preview_data["preview_error"] = str(result)
-                preview_data["can_calculate"] = False
+                # 尝试计算（支持三段式）
+                success, result = evaluate_formula_with_values_three_segment(formula.formula, self.workbook_manager.source_items)
 
-            preview_results[target_id] = preview_data
+                if success:
+                    preview_data["preview_result"] = result
+                    preview_data["can_calculate"] = True
+                else:
+                    preview_data["preview_error"] = str(result)
+                    preview_data["can_calculate"] = False
+
+                preview_results[preview_key] = preview_data
 
         return {
             "total_previewed": len(preview_results),

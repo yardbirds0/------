@@ -594,7 +594,7 @@ def validate_formula_syntax_three_segment(formula: str, workbook_manager=None) -
                 if sheet_name not in workbook_manager.worksheets:
                     return False, f"未找到工作表'{sheet_name}'"
 
-                # 检查来源项是否存在（比对时strip去除空格）
+                # 检查来源项是否存在（比对时strip去除空格，支持前缀匹配）
                 source_item = None
                 for source in workbook_manager.source_items.values():
                     # ⭐ 比对时对两边都strip()，但不改变原始值（保留用于UI显示）
@@ -604,6 +604,23 @@ def validate_formula_syntax_three_segment(formula: str, workbook_manager=None) -
                     if source.sheet_name == sheet_name and source_name_stripped == item_name_stripped:
                         source_item = source
                         break
+
+                # 如果直接查找失败，尝试添加常见财务报表前缀
+                if not source_item:
+                    common_prefixes = [
+                        "加：", "减：", "其中：", "其中:",
+                        "*", "☆", "△", "▲", "√"
+                    ]
+
+                    for prefix in common_prefixes:
+                        prefixed_name = prefix + item_name_stripped
+                        for source in workbook_manager.source_items.values():
+                            source_name_stripped = source.name.strip() if isinstance(source.name, str) else source.name
+                            if source.sheet_name == sheet_name and source_name_stripped == prefixed_name:
+                                source_item = source
+                                break
+                        if source_item:
+                            break
 
                 if not source_item:
                     return False, f"在工作表'{sheet_name}'中未找到项目'{item_name}'"
@@ -674,39 +691,87 @@ def evaluate_formula_with_values_three_segment(formula: str, source_items: Dict[
 
         # 构建值映射表
         working_formula = formula
+
+        def _coerce_numeric_value(value: Any) -> float:
+            """将引用值转换为可计算的数值, 支持常见占位符视为0"""
+            if value is None:
+                return 0.0
+
+            if isinstance(value, (int, float)):
+                return float(value)
+
+            value_str = str(value).strip()
+
+            placeholder_tokens = {"", "-", "--", "—", "–", "－"}
+            if value_str in placeholder_tokens:
+                return 0.0
+
+            cleaned = value_str.replace(",", "")
+            if cleaned.startswith("(") and cleaned.endswith(")"):
+                cleaned = f"-{cleaned[1:-1]}"
+
+            try:
+                return float(cleaned)
+            except (ValueError, TypeError):
+                raise ValueError(f"引用值'{value}'不是有效的数字")
+
         for ref in references:
             sheet_name = ref['sheet_name']
             item_name = ref['item_name']
             column_name = ref['column_name']
 
-            # 查找对应的来源项（比对时strip去除空格）
+            # 查找对应的来源项（比对时strip去除空格，支持前缀匹配）
             ref_value = None
+            source_item_found = None
+
+            # 第一次查找：直接匹配
             for source in source_items.values():
                 # ⭐ 比对时对两边都strip()，但不改变原始值
                 source_name_stripped = source.name.strip() if isinstance(source.name, str) else source.name
                 item_name_stripped = item_name.strip() if isinstance(item_name, str) else item_name
 
                 if source.sheet_name == sheet_name and source_name_stripped == item_name_stripped:
-                    # 从values字典中获取对应列的值（列名也strip比对）
-                    if hasattr(source, 'values') and isinstance(source.values, dict):
-                        # ⭐ 对列名进行strip比对查找
-                        column_name_stripped = column_name.strip() if isinstance(column_name, str) else column_name
-                        for col_key, col_value in source.values.items():
-                            col_key_stripped = col_key.strip() if isinstance(col_key, str) else col_key
-                            if col_key_stripped == column_name_stripped:
-                                ref_value = col_value
-                                break
+                    source_item_found = source
                     break
+
+            # 第二次查找：如果直接匹配失败，尝试添加常见财务报表前缀
+            if not source_item_found:
+                common_prefixes = [
+                    "加：", "减：", "其中：", "其中:",
+                    "*", "☆", "△", "▲", "√"
+                ]
+
+                item_name_stripped = item_name.strip() if isinstance(item_name, str) else item_name
+                for prefix in common_prefixes:
+                    prefixed_name = prefix + item_name_stripped
+                    for source in source_items.values():
+                        source_name_stripped = source.name.strip() if isinstance(source.name, str) else source.name
+                        if source.sheet_name == sheet_name and source_name_stripped == prefixed_name:
+                            source_item_found = source
+                            break
+                    if source_item_found:
+                        break
+
+            # 如果找到来源项，从values字典中获取对应列的值
+            if source_item_found:
+                if hasattr(source_item_found, 'values') and isinstance(source_item_found.values, dict):
+                    # ⭐ 对列名进行strip比对查找
+                    column_name_stripped = column_name.strip() if isinstance(column_name, str) else column_name
+                    for col_key, col_value in source_item_found.values.items():
+                        col_key_stripped = col_key.strip() if isinstance(col_key, str) else col_key
+                        if col_key_stripped == column_name_stripped:
+                            ref_value = col_value
+                            break
 
             if ref_value is None:
                 return False, f"无法找到引用值: {ref['full_reference']}"
 
             # 替换引用为实际值
             try:
-                numeric_value = float(ref_value)
+                numeric_value = _coerce_numeric_value(ref_value)
                 working_formula = working_formula.replace(ref['full_reference'], str(numeric_value))
-            except (ValueError, TypeError):
-                return False, f"引用值'{ref_value}'不是有效的数字"
+            except (ValueError, TypeError) as e:
+                return False, str(e)
 
         # 计算最终结果
         try:

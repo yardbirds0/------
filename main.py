@@ -1023,31 +1023,67 @@ from utils.excel_utils import (
 
 
 class LogManager:
-    """日志管理器"""
+    """日志管理器 - 支持操作日志和系统日志双区域"""
 
-    def __init__(self, output_widget: QPlainTextEdit):
-        self.output_widget = output_widget
+    def __init__(self, operation_widget: QPlainTextEdit, system_widget: QPlainTextEdit = None):
+        """
+        初始化日志管理器
 
-    def log(self, message: str, level: str = "INFO"):
-        """添加日志消息"""
+        Args:
+            operation_widget: 操作日志输出控件
+            system_widget: 系统日志输出控件（可选，如果不提供则都输出到operation_widget）
+        """
+        self.operation_widget = operation_widget  # 操作日志区域
+        self.system_widget = system_widget if system_widget else operation_widget  # 系统日志区域
+        self.output_widget = operation_widget  # 向后兼容
+
+    def log(self, message: str, level: str = "INFO", log_type: str = "system"):
+        """
+        添加日志消息
+
+        Args:
+            message: 日志消息
+            level: 日志级别 (INFO, WARNING, ERROR, SUCCESS)
+            log_type: 日志类型 ("operation" 或 "system")
+        """
         timestamp = datetime.now().strftime("%H:%M:%S")
         log_entry = f"[{timestamp}] {level}: {message}"
-        self.output_widget.appendPlainText(log_entry)
 
-    def info(self, message: str):
-        self.log(message, "INFO")
+        # 根据日志类型选择输出控件
+        if log_type == "operation":
+            self.operation_widget.appendPlainText(log_entry)
+        else:
+            self.system_widget.appendPlainText(log_entry)
 
-    def warning(self, message: str):
-        self.log(message, "WARNING")
+    def operation(self, message: str, level: str = "INFO"):
+        """操作日志 - 用户的主动操作"""
+        self.log(message, level, log_type="operation")
 
-    def error(self, message: str):
-        self.log(message, "ERROR")
+    def system(self, message: str, level: str = "INFO"):
+        """系统日志 - 系统内部处理"""
+        self.log(message, level, log_type="system")
 
-    def success(self, message: str):
-        self.log(message, "SUCCESS")
+    def info(self, message: str, log_type: str = "system"):
+        """INFO级别日志"""
+        self.log(message, "INFO", log_type=log_type)
+
+    def warning(self, message: str, log_type: str = "system"):
+        """WARNING级别日志"""
+        self.log(message, "WARNING", log_type=log_type)
+
+    def error(self, message: str, log_type: str = "system"):
+        """ERROR级别日志"""
+        self.log(message, "ERROR", log_type=log_type)
+
+    def success(self, message: str, log_type: str = "operation"):
+        """SUCCESS级别日志（默认为操作日志）"""
+        self.log(message, "SUCCESS", log_type=log_type)
 
     def clear(self):
-        self.output_widget.clear()
+        """清空所有日志"""
+        self.operation_widget.clear()
+        if self.system_widget and self.system_widget != self.operation_widget:
+            self.system_widget.clear()
 
 
 class FormulaSyntaxHighlighter(QSyntaxHighlighter):
@@ -1269,9 +1305,7 @@ class TargetItemModel(QAbstractItemModel):
         if self.workbook_manager and sheet_name:
             metadata = self.workbook_manager.target_sheet_columns.get(sheet_name, [])
 
-        # 添加调试日志
-        if hasattr(self, "log_manager"):
-            self.log_manager.info(f"表格'{sheet_name}'的列元数据: {len(metadata)}列")
+        # 表格列元数据已加载（不输出日志，避免技术细节）
 
         # 如果元数据为空，提供默认配置
         if not metadata and sheet_name:
@@ -1892,6 +1926,11 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("AI辅助财务报表数据映射与填充工具 - PySide6版")
         self.setGeometry(100, 100, 1600, 1000)
 
+        # 设置窗口图标（关键！）
+        icon_path = Path("icon.ico")
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
+
         # 全屏状态标志
         self._is_fullscreen = False
         self._saved_window_state = None
@@ -2063,11 +2102,11 @@ class MainWindow(QMainWindow):
                 border: none;
                 border-right: 1px solid rgba(230, 200, 215, 0.35);
                 border-bottom: 1px solid rgba(230, 200, 215, 0.45);
-                padding: 10px 12px;
+                padding: 4px 10px;
                 font-weight: 600;
                 font-size: 12pt;
                 color: #5a3a47;
-                min-height: 34px;
+                min-height: 0px;
             }
 
             QHeaderView::section:hover {
@@ -2358,7 +2397,7 @@ class MainWindow(QMainWindow):
         """
         )
 
-        self.log_manager.info("✨ 玻璃化主题已应用")
+        # 玻璃化主题应用完成（不输出日志，避免技术细节干扰用户）
 
     def apply_shadow_effects(self):
         """为关键面板添加阴影效果"""
@@ -2373,7 +2412,7 @@ class MainWindow(QMainWindow):
             shadow.setOffset(0, 4)
             groupbox.setGraphicsEffect(shadow)
 
-        self.log_manager.info("✨ 阴影效果已应用")
+        # 阴影效果应用完成（不输出日志）
 
     def create_navigator_panel(self, parent_splitter):
         """创建左侧导航面板"""
@@ -2488,38 +2527,39 @@ class MainWindow(QMainWindow):
         workbench_widget = QWidget()
         workbench_layout = QVBoxLayout(workbench_widget)
 
-        # 工具栏
+        # 第一行工具栏：主要功能按钮
         tools_layout = QHBoxLayout()
-        self.load_files_btn = QPushButton("📁 加载文件")
-        self.ai_analyze_btn = QPushButton("🤖 AI分析")
-        self.ai_assistant_btn = QPushButton("💬 AI分析助手")  # 新增 AI 对话助手按钮
-        self.calculate_btn = QPushButton("🔁 重算所有数值")
+        self.load_files_btn = QPushButton("📁 加载单个Excel")
+        self.load_multiple_files_btn = QPushButton("📂 加载多个Excel")
+        self.ai_assistant_btn = QPushButton("💬 AI分析助手")
+        self.import_formula_btn = QPushButton("📥 导入公式")
+        self.save_formula_btn = QPushButton("💾 另存公式")
         self.export_btn = QPushButton("💾 导出Excel")
-        self.help_btn = QPushButton("❓ 帮助")
-        self.clear_sheet_formulas_btn = QPushButton("🗑️ 清除工作表公式")
-        self.clear_all_formulas_btn = QPushButton("🗑️ 清除所有公式")
 
         # 设置按钮样式 - 继承全局玻璃化样式
         for btn in [
             self.load_files_btn,
-            self.ai_analyze_btn,
+            self.load_multiple_files_btn,
             self.ai_assistant_btn,
-            self.calculate_btn,
+            self.import_formula_btn,
+            self.save_formula_btn,
             self.export_btn,
-            self.help_btn,
-            self.clear_sheet_formulas_btn,
-            self.clear_all_formulas_btn,
         ]:
             btn.setMinimumHeight(35)
 
+        # 设置工具提示
+        self.load_files_btn.setToolTip("加载单个Excel工作簿")
+        self.load_multiple_files_btn.setToolTip("一次加载多个Excel文件，所有sheet合并处理后导出")
+        self.save_formula_btn.setToolTip("将当前工作表的公式映射导出为 JSON 文件。")
+        self.import_formula_btn.setToolTip("从 JSON 文件导入映射公式并应用到当前工作表。")
+
+        # 第一行按钮布局
         tools_layout.addWidget(self.load_files_btn)
-        tools_layout.addWidget(self.ai_analyze_btn)
+        tools_layout.addWidget(self.load_multiple_files_btn)
         tools_layout.addWidget(self.ai_assistant_btn)
-        tools_layout.addWidget(self.calculate_btn)
+        tools_layout.addWidget(self.import_formula_btn)
+        tools_layout.addWidget(self.save_formula_btn)
         tools_layout.addWidget(self.export_btn)
-        tools_layout.addWidget(self.help_btn)
-        tools_layout.addWidget(self.clear_sheet_formulas_btn)
-        tools_layout.addWidget(self.clear_all_formulas_btn)
         tools_layout.addStretch()
 
         # 进度条
@@ -2532,7 +2572,7 @@ class MainWindow(QMainWindow):
         # 主数据表工具栏
         table_toolbar_layout = QVBoxLayout()
 
-        # 第一行：工作表选择
+        # 第二行：工作表选择 + 操作按钮
         sheet_select_layout = QHBoxLayout()
         target_sheet_label = QLabel("选择工作表:")
         target_sheet_label.setStyleSheet("font-size: 12pt;")
@@ -2567,22 +2607,22 @@ class MainWindow(QMainWindow):
         )
         sheet_select_layout.addWidget(self.fullscreen_btn)
 
-        self.save_formula_btn = QPushButton("💾 保存公式")
-        self.save_formula_btn.setMinimumHeight(35)
-        self.save_formula_btn.setToolTip("将当前工作表的公式映射导出为 JSON 文件。")
-        self.save_formula_btn.clicked.connect(self.save_formula_snapshot_via_dialog)
-        sheet_select_layout.addWidget(self.save_formula_btn)
+        # 清除当前表公式按钮
+        self.clear_sheet_formulas_btn = QPushButton("🗑️ 清除当前表公式")
+        self.clear_sheet_formulas_btn.setMinimumHeight(35)
+        self.clear_sheet_formulas_btn.setToolTip("清除当前工作表的所有公式映射")
+        sheet_select_layout.addWidget(self.clear_sheet_formulas_btn)
 
-        self.import_formula_btn = QPushButton("📥 导入公式")
-        self.import_formula_btn.setMinimumHeight(35)
-        self.import_formula_btn.setToolTip("从 JSON 文件导入映射公式并应用到当前工作表。")
-        self.import_formula_btn.clicked.connect(self.import_formula_snapshot_via_dialog)
-        sheet_select_layout.addWidget(self.import_formula_btn)
+        # 清除所有表公式按钮
+        self.clear_all_formulas_btn = QPushButton("🗑️ 清除所有表公式")
+        self.clear_all_formulas_btn.setMinimumHeight(35)
+        self.clear_all_formulas_btn.setToolTip("清除所有工作表的公式映射")
+        sheet_select_layout.addWidget(self.clear_all_formulas_btn)
 
         sheet_select_layout.addStretch()
         table_toolbar_layout.addLayout(sheet_select_layout)
 
-        # 第二行：搜索框和展示列按钮（4:1布局）
+        # 第三行：搜索框和展示列按钮（4:1布局）
         search_layout = QHBoxLayout()
         self.target_search_line = QLineEdit()
         self.target_search_line.setPlaceholderText("搜索待写入项...")
@@ -3117,7 +3157,12 @@ class MainWindow(QMainWindow):
 
         tools_widget.addTab(source_library_widget, "📚 来源项库")
 
-        # 选项卡二：分类摘要
+        # 选项卡二：分析（新增）
+        from components.main_analysis_panel import MainAnalysisPanel
+        self.main_analysis_panel = MainAnalysisPanel()
+        tools_widget.addTab(self.main_analysis_panel, "📊 分析")
+
+        # 选项卡三：分类摘要
         summary_widget = QWidget()
         summary_layout = QVBoxLayout(summary_widget)
 
@@ -3138,111 +3183,49 @@ class MainWindow(QMainWindow):
 
         tools_widget.addTab(summary_widget, "📋 分类摘要")
 
-        # 选项卡三：单元格检查
-        cell_inspector_widget = QWidget()
-        cell_layout = QVBoxLayout(cell_inspector_widget)
-        cell_layout.setSpacing(12)
-
-        header_layout = QHBoxLayout()
-        formula_label = QLabel("公式编辑器")
-        formula_label.setFont(QFont("", 10, QFont.Bold))
-        header_layout.addWidget(formula_label)
-        header_layout.addStretch()
-        cell_layout.addLayout(header_layout)
-
-        self.formula_editor = FormulaEditor()
-        self.formula_editor.setMaximumHeight(140)
-        self.formula_editor.setStyleSheet(
-            """
-            QTextEdit {
-                border: 2px solid #ddd;
-                border-radius: 4px;
-                padding: 5px;
-                font-family: 'Consolas', 'Monaco', monospace;
-                font-size: 11px;
-            }
-            QTextEdit:focus {
-                border-color: #4CAF50;
-            }
-        """
-        )
-        cell_layout.addWidget(self.formula_editor)
-
-        formula_tools_layout = QHBoxLayout()
-        validate_formula_btn = QPushButton("✅ 验证")
-        clear_formula_btn = QPushButton("🗑️ 清空")
-        insert_example_btn = QPushButton("💡 示例")
-
-        for btn in [validate_formula_btn, clear_formula_btn, insert_example_btn]:
-            btn.setMaximumHeight(26)
-            btn.setStyleSheet(
-                """
-                QPushButton {
-                    border: 1px solid #dee2e6;
-                    border-radius: 3px;
-                    padding: 2px 8px;
-                    font-size: 10px;
-                }
-                QPushButton:hover {
-                    background-color: rgba(100, 149, 237, 0.15);
-                }
-            """
-            )
-
-        validate_formula_btn.clicked.connect(self.validate_formula)
-        clear_formula_btn.clicked.connect(self.clear_formulas)
-        insert_example_btn.clicked.connect(self.insert_formula_example)
-
-        formula_tools_layout.addWidget(validate_formula_btn)
-        formula_tools_layout.addWidget(clear_formula_btn)
-        formula_tools_layout.addWidget(insert_example_btn)
-        formula_tools_layout.addStretch()
-        cell_layout.addLayout(formula_tools_layout)
-
-        property_header = QLabel("属性信息")
-        property_header.setFont(QFont("", 10, QFont.Bold))
-        cell_layout.addWidget(property_header)
-
-        self.property_table = PropertyTableWidget()
-        self.property_table.set_properties({})
-        cell_layout.addWidget(self.property_table)
-        cell_layout.addStretch()
-
-        tools_widget.addTab(cell_inspector_widget, "📋 单元格检查")
+        # 选项卡四：单元格检查 - 已删除
+        # 该TAB的功能已整合到其他地方，不再需要单独的面板
 
         parent_splitter.addWidget(tools_widget)
 
     def create_output_panel(self, parent_layout):
-        """创建底部输出面板"""
+        """创建底部输出面板 - 双日志区域"""
         # 创建日志区域容器
         self.log_container = QWidget()  # 保存引用用于全屏切换
         self.log_container.setMaximumHeight(180)  # 限制整个日志区域高度
-        log_layout = QVBoxLayout(self.log_container)
-        log_layout.setContentsMargins(5, 5, 5, 5)
-        log_layout.setSpacing(2)
+        container_layout = QHBoxLayout(self.log_container)
+        container_layout.setContentsMargins(5, 5, 5, 5)
+        container_layout.setSpacing(10)
 
-        # 日志标题 - 设置小字体和固定高度
-        log_label = QLabel("📋 系统日志")
-        log_label.setStyleSheet(
+        # ========== 左侧：操作日志 ==========
+        operation_widget = QWidget()
+        operation_layout = QVBoxLayout(operation_widget)
+        operation_layout.setContentsMargins(0, 0, 0, 0)
+        operation_layout.setSpacing(2)
+
+        # 操作日志标题
+        operation_label = QLabel("👤 操作日志")
+        operation_label.setStyleSheet(
             """
             QLabel {
                 font-size: 12px;
                 font-weight: bold;
-                color: #666;
+                color: #2563EB;
                 padding: 2px 5px;
                 border: 1px solid #ddd;
                 border-radius: 3px;
+                background-color: #EFF6FF;
             }
         """
         )
-        log_label.setFixedHeight(25)  # 固定标题高度
-        log_layout.addWidget(log_label)
+        operation_label.setFixedHeight(25)
+        operation_layout.addWidget(operation_label)
 
-        # 日志文本框
-        self.output_text = QPlainTextEdit()
-        self.output_text.setMaximumHeight(145)  # 文本框高度
-        self.output_text.setReadOnly(True)
-        self.output_text.setStyleSheet(
+        # 操作日志文本框
+        self.operation_log_text = QPlainTextEdit()
+        self.operation_log_text.setMaximumHeight(145)
+        self.operation_log_text.setReadOnly(True)
+        self.operation_log_text.setStyleSheet(
             """
             QPlainTextEdit {
                 font-family: 'Consolas', 'Monaco', monospace;
@@ -3250,13 +3233,63 @@ class MainWindow(QMainWindow):
                 border: 1px solid #ddd;
                 border-radius: 3px;
                 padding: 5px;
+                background-color: #FAFAFA;
             }
         """
         )
-        log_layout.addWidget(self.output_text)
+        operation_layout.addWidget(self.operation_log_text)
 
-        # 创建日志管理器
-        self.log_manager = LogManager(self.output_text)
+        container_layout.addWidget(operation_widget, stretch=1)
+
+        # ========== 右侧：系统日志 ==========
+        system_widget = QWidget()
+        system_layout = QVBoxLayout(system_widget)
+        system_layout.setContentsMargins(0, 0, 0, 0)
+        system_layout.setSpacing(2)
+
+        # 系统日志标题
+        system_label = QLabel("⚙️ 系统日志")
+        system_label.setStyleSheet(
+            """
+            QLabel {
+                font-size: 12px;
+                font-weight: bold;
+                color: #059669;
+                padding: 2px 5px;
+                border: 1px solid #ddd;
+                border-radius: 3px;
+                background-color: #F0FDF4;
+            }
+        """
+        )
+        system_label.setFixedHeight(25)
+        system_layout.addWidget(system_label)
+
+        # 系统日志文本框
+        self.system_log_text = QPlainTextEdit()
+        self.system_log_text.setMaximumHeight(145)
+        self.system_log_text.setReadOnly(True)
+        self.system_log_text.setStyleSheet(
+            """
+            QPlainTextEdit {
+                font-family: 'Consolas', 'Monaco', monospace;
+                font-size: 11px;
+                border: 1px solid #ddd;
+                border-radius: 3px;
+                padding: 5px;
+                background-color: #FAFAFA;
+            }
+        """
+        )
+        system_layout.addWidget(self.system_log_text)
+
+        container_layout.addWidget(system_widget, stretch=1)
+
+        # 创建日志管理器（双区域）
+        self.log_manager = LogManager(self.operation_log_text, self.system_log_text)
+
+        # 向后兼容：保留output_text引用
+        self.output_text = self.operation_log_text
 
         # 添加到主布局
         parent_layout.addWidget(self.log_container)
@@ -3315,22 +3348,23 @@ class MainWindow(QMainWindow):
 
     def setup_connections(self):
         """设置信号连接"""
-        # 工具栏按钮
+        # 第一行工具栏按钮
         self.load_files_btn.clicked.connect(self.load_files)
-        self.ai_analyze_btn.clicked.connect(self.ai_analyze)
-        self.ai_assistant_btn.clicked.connect(self.show_ai_assistant)  # 新增 AI 助手连接
-        self.calculate_btn.clicked.connect(self.calculate_preview)
+        self.load_multiple_files_btn.clicked.connect(self.load_multiple_files)
+        self.ai_assistant_btn.clicked.connect(self.show_ai_assistant)
+        self.import_formula_btn.clicked.connect(self.import_formula_snapshot_via_dialog)
+        self.save_formula_btn.clicked.connect(self.save_formula_snapshot_via_dialog)
         self.export_btn.clicked.connect(self.export_excel)
-        self.help_btn.clicked.connect(self.show_about)
+
+        # 第二行操作按钮
         self.clear_sheet_formulas_btn.clicked.connect(self.clear_current_sheet_formulas)
         self.clear_all_formulas_btn.clicked.connect(self.clear_all_formulas)
 
         # 初始状态：只有加载按钮和 AI 助手可用
-        self.ai_analyze_btn.setEnabled(False)
         self.ai_assistant_btn.setEnabled(True)  # AI 助手始终可用
-        self.calculate_btn.setEnabled(False)
+        self.import_formula_btn.setEnabled(False)
+        self.save_formula_btn.setEnabled(False)
         self.export_btn.setEnabled(False)
-        self.help_btn.setEnabled(True)
         self.clear_sheet_formulas_btn.setEnabled(False)
         self.clear_all_formulas_btn.setEnabled(False)
 
@@ -3349,10 +3383,30 @@ class MainWindow(QMainWindow):
             lambda _: self.schedule_main_table_resize(0)
         )
 
-        # 公式编辑器信号
-        self.formula_editor.formulaChanged.connect(self.on_formula_changed)
+        # 公式编辑器信号 - 已删除（单元格检查TAB已移除）
+        # self.formula_editor.formulaChanged.connect(self.on_formula_changed)
 
         # 注意：搜索功能现在由SearchableSourceTree内部处理
+
+        # 主界面分析面板信号连接（新增）
+        if hasattr(self, 'main_analysis_panel'):
+            # 连接到chat_controller的analysis_controller
+            self.main_analysis_panel.target_sheet_changed.connect(
+                lambda sheet_name: self.chat_controller.analysis_controller.handle_target_sheet_change(sheet_name)
+                if self.chat_controller else None
+            )
+            self.main_analysis_panel.target_column_toggled.connect(
+                lambda key, checked: self.chat_controller.analysis_controller.handle_target_column_toggle(key, checked)
+                if self.chat_controller else None
+            )
+            self.main_analysis_panel.source_column_toggled.connect(
+                lambda sheet_name, key, checked: self.chat_controller.analysis_controller.handle_source_column_toggle(sheet_name, key, checked)
+                if self.chat_controller else None
+            )
+            # 连接按钮信号
+            self.main_analysis_panel.auto_parse_requested.connect(self._on_main_analysis_auto_parse)
+            self.main_analysis_panel.export_json_requested.connect(self._on_main_analysis_export_json)
+            self.main_analysis_panel.apply_requested.connect(self._on_main_analysis_apply)
 
     def _apply_main_header_layout(self):
         if not hasattr(self, "main_data_grid") or not hasattr(self, "target_model"):
@@ -3383,12 +3437,12 @@ class MainWindow(QMainWindow):
             # 关键修复1：先停止旧的定时器，避免多个调用排队
             if self._main_resize_timer.isActive():
                 self._main_resize_timer.stop()
-                self.log_manager.info("停止之前的列宽调整定时器")
+                # 停止之前的列宽调整定时器（不输出日志）
 
             # 关键修复2：增加最小延迟，确保view有足够时间更新
             actual_delay = max(200, delay_ms)  # 最小200ms延迟
             self._main_resize_timer.start(actual_delay)
-            self.log_manager.info(f"列宽调整将在 {actual_delay}ms 后执行")
+            # 列宽调整定时器已启动（不输出日志）
 
             # 同步调整行高延迟
             schedule_row_resize(self.main_data_grid, max(40, actual_delay + 40))
@@ -3646,7 +3700,7 @@ class MainWindow(QMainWindow):
                 max_widths=max_widths_dict,
             )
 
-            self.log_manager.info("已应用智能填充，列宽占满容器宽度")
+            # 已应用智能填充（不输出日志）
 
         except Exception as e:
             self.log_manager.warning(f"智能填充列宽时出错: {e}")
@@ -3723,13 +3777,14 @@ class MainWindow(QMainWindow):
             and getattr(self.workbook_manager, "calculation_results", {})
         )
 
+        # 第一行按钮状态
         self.load_files_btn.setEnabled(True)
-        self.ai_analyze_btn.setEnabled(has_workbook)
-        self.calculate_btn.setEnabled(has_workbook)
+        self.ai_assistant_btn.setEnabled(True)  # AI 助手始终可用
+        self.import_formula_btn.setEnabled(has_workbook)
+        self.save_formula_btn.setEnabled(has_workbook)
         self.export_btn.setEnabled(has_results)
-        self.help_btn.setEnabled(True)
 
-        # 清除按钮的启用逻辑
+        # 第二行清除按钮的启用逻辑
         has_formulas = bool(
             self.workbook_manager and self.workbook_manager.mapping_formulas
         )
@@ -3739,11 +3794,8 @@ class MainWindow(QMainWindow):
             and self.target_model.active_sheet_name
         )
 
-        # 安全检查：确保按钮存在再设置状态
-        if hasattr(self, "clear_sheet_formulas_btn") and self.clear_sheet_formulas_btn:
-            self.clear_sheet_formulas_btn.setEnabled(has_current_sheet)
-        if hasattr(self, "clear_all_formulas_btn") and self.clear_all_formulas_btn:
-            self.clear_all_formulas_btn.setEnabled(has_formulas)
+        self.clear_sheet_formulas_btn.setEnabled(has_current_sheet)
+        self.clear_all_formulas_btn.setEnabled(has_formulas)
 
     def show_sheet_classification_dialog(
         self, sheet_name: str, auto_classification: str
@@ -3769,6 +3821,8 @@ class MainWindow(QMainWindow):
 
     def load_files(self):
         """加载Excel文件"""
+        import time
+
         file_paths, _ = QFileDialog.getOpenFileNames(
             self, "选择Excel文件", "", "Excel Files (*.xlsx *.xls);;All Files (*)"
         )
@@ -3817,17 +3871,19 @@ class MainWindow(QMainWindow):
             )
 
             if msg.exec() != QMessageBox.Yes:
-                self.log_manager.info("用户取消重新加载文件")
+                self.log_manager.operation("❌ 取消重新加载文件")
                 return
 
         self.load_files_btn.setEnabled(False)
+        start_time = time.time()
 
         if existing_path:
-            self.log_manager.info("清空当前会话，准备重新加载文件")
             self.reset_current_session()
 
         try:
-            self.log_manager.info(f"开始加载 {len(file_paths)} 个文件...")
+            # 记录操作日志
+            file_name = Path(file_paths[0]).name if file_paths else "未知文件"
+            self.log_manager.operation(f"📁 加载文件: {file_name}")
 
             if not existing_path:
                 # 确保初次加载时状态干净
@@ -3837,7 +3893,10 @@ class MainWindow(QMainWindow):
 
             if success:
                 self.workbook_manager = self.file_manager.get_workbook_manager()
-                self.log_manager.success(f"文件加载成功: {message}")
+
+                # 记录加载成功（带耗时）
+                elapsed = time.time() - start_time
+                self.log_manager.success(f"✅ 文件加载成功 (耗时: {elapsed:.1f}秒)")
 
                 # 直接显示拖拽式工作表分类界面
                 if self.workbook_manager and (
@@ -3845,7 +3904,7 @@ class MainWindow(QMainWindow):
                     or self.workbook_manager.data_source_sheets
                 ):
                     self.show_classification_dialog()
-                    self.log_manager.info("工作表已自动识别，请在对话框中调整分类")
+                    self.log_manager.operation("📊 请调整工作表分类")
 
                 else:
                     # 没有找到工作表
@@ -3866,6 +3925,91 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "错误", error_msg)
         finally:
             self.load_files_btn.setEnabled(True)
+            self.update_toolbar_states()
+
+    def load_multiple_files(self):
+        """加载多个Excel文件"""
+        import time
+
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self, "选择多个Excel文件（可多选）", "",
+            "Excel Files (*.xlsx *.xls);;All Files (*)"
+        )
+
+        if not file_paths:
+            return
+
+        if len(file_paths) < 2:
+            QMessageBox.information(
+                self, "提示",
+                "只选择了一个文件，请使用[加载单个Excel]按钮。\n\n"
+                "加载多个Excel功能用于合并多个独立的Excel文件。"
+            )
+            return
+
+        # 确认加载
+        msg_text = f"将加载 {len(file_paths)} 个Excel文件：\n\n"
+        for i, fp in enumerate(file_paths[:5], 1):
+            msg_text += f"{i}. {Path(fp).name}\n"
+        if len(file_paths) > 5:
+            msg_text += f"... 还有 {len(file_paths)-5} 个文件\n"
+        msg_text += "\n所有文件的sheet将合并在一起处理，\n最终导出时会合并到一个Excel文件中。"
+
+        reply = QMessageBox.question(
+            self, "确认加载", msg_text,
+            QMessageBox.Yes | QMessageBox.No
+        )
+
+        if reply != QMessageBox.Yes:
+            self.log_manager.operation("❌ 取消加载多个文件")
+            return
+
+        self.load_files_btn.setEnabled(False)
+        self.load_multiple_files_btn.setEnabled(False)
+        start_time = time.time()
+
+        try:
+            # 清空当前会话
+            self.reset_current_session()
+
+            # 记录操作日志
+            self.log_manager.operation(f"📂 加载多个Excel: {len(file_paths)}个文件")
+
+            success, message = self.file_manager.load_excel_files(file_paths)
+
+            if success:
+                self.workbook_manager = self.file_manager.get_workbook_manager()
+
+                # 记录加载成功（带耗时）
+                elapsed = time.time() - start_time
+                sheet_count = len(self.workbook_manager.worksheets) if self.workbook_manager else 0
+                self.log_manager.success(
+                    f"✅ 多文件加载成功: {len(file_paths)}个文件, {sheet_count}个sheet (耗时: {elapsed:.1f}秒)"
+                )
+
+                # 显示分类对话框
+                if self.workbook_manager and (
+                    self.workbook_manager.flash_report_sheets
+                    or self.workbook_manager.data_source_sheets
+                ):
+                    self.show_classification_dialog()
+                    self.log_manager.operation("📊 请调整工作表分类")
+                else:
+                    self.log_manager.warning("未找到任何工作表")
+
+            else:
+                self.log_manager.error(f"加载失败: {message}")
+                QMessageBox.warning(self, "加载失败", message)
+
+        except Exception as e:
+            error_msg = f"加载多个文件时发生异常: {str(e)}"
+            self.log_manager.error(error_msg)
+            QMessageBox.critical(self, "错误", error_msg)
+            import traceback
+            traceback.print_exc()
+        finally:
+            self.load_files_btn.setEnabled(True)
+            self.load_multiple_files_btn.setEnabled(True)
             self.update_toolbar_states()
 
     def apply_final_classifications(self, final_classifications):
@@ -4187,7 +4331,7 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            self.log_manager.info("开始数据提取...")
+            self.log_manager.system("开始数据提取...")
 
             # 使用增强的数据提取器
             extractor = DataExtractor(self.workbook_manager)
@@ -4200,8 +4344,8 @@ class MainWindow(QMainWindow):
             # 显示统计信息
             targets_count = len(self.workbook_manager.target_items)
             sources_count = len(self.workbook_manager.source_items)
-            self.log_manager.success(
-                f"数据提取完成: 目标项 {targets_count} 个, 来源项 {sources_count} 个"
+            self.log_manager.system(
+                f"提取完成: 目标项{targets_count}个, 来源项{sources_count}个"
             )
 
             # 更新所有模型
@@ -4257,8 +4401,8 @@ class MainWindow(QMainWindow):
                     self._apply_main_header_layout()
                     self.log_manager.info(f"已初始化主表格，显示工作表: {first_sheet}")
 
-            # 更新公式编辑器的工作簿管理器
-            self.formula_editor.set_workbook_manager(self.workbook_manager)
+            # 更新公式编辑器的工作簿管理器 - 已删除（单元格检查TAB已移除）
+            # self.formula_editor.set_workbook_manager(self.workbook_manager)
             self.formula_delegate.workbook_manager = self.workbook_manager
 
             self.schedule_main_table_resize(0)
@@ -4686,77 +4830,23 @@ class MainWindow(QMainWindow):
 
         return applied_count
 
-    def calculate_preview(self):
-        """计算预览"""
+    def export_excel(self):
+        """导出Excel - 导出所有待写入表的公式"""
         if not self.workbook_manager:
             QMessageBox.warning(self, "警告", "请先加载并提取数据")
             return
 
-        try:
-            self.log_manager.info("开始重算所有数值...")
-
-            self.progress_bar.setVisible(True)
-            self.progress_bar.setRange(0, 0)
-            self.progress_bar.setFormat("重算中，请稍候...")
-            QApplication.processEvents()
-
-            from modules.calculation_engine import create_calculation_engine
-
-            self.calculation_engine = create_calculation_engine(self.workbook_manager)
-            results = self.calculation_engine.calculate_all_formulas(
-                show_progress=False
-            )
-
-            # 更新模型以显示计算结果
-            self.target_model.layoutChanged.emit()
-
-            summary = self.calculation_engine.get_calculation_summary()
-            success_count = summary.get("successful_calculations", 0)
-            total_count = summary.get("total_formulas", 0)
-            error_count = summary.get(
-                "failed_calculations", total_count - success_count
-            )
-
-            self.log_manager.success(
-                f"重算完成：成功 {success_count} 项，失败 {error_count} 项，共 {total_count} 项"
-            )
-
-            QMessageBox.information(
-                self,
-                "重算完成",
-                (
-                    f"成功计算 <b>{success_count}</b> 项\n"
-                    f"失败 <b>{error_count}</b> 项"
-                ),
-            )
-
-            self.schedule_main_table_resize(0)
-            self.update_toolbar_states()
-
-        except Exception as e:
-            error_msg = f"重算时发生异常: {str(e)}"
-            self.log_manager.error(error_msg)
-            QMessageBox.critical(self, "错误", error_msg)
-        finally:
-            self.progress_bar.setVisible(False)
-            self.progress_bar.setRange(0, 100)
-            self.progress_bar.setValue(0)
-
-    def export_excel(self):
-        """导出Excel"""
-        if not self.workbook_manager:
-            QMessageBox.warning(self, "警告", "请先加载并重算数据")
-            return
-
         if not getattr(self.workbook_manager, "calculation_results", {}):
-            QMessageBox.warning(self, "提示", "暂无计算结果，请先点击“重算所有数值”。")
+            QMessageBox.warning(self, "提示", "暂无计算结果，请先生成或刷新计算数据。")
             return
 
-        if not self.calculation_engine:
-            from modules.calculation_engine import create_calculation_engine
+        # 检查是否有待写入表
+        flash_report_sheets = self.workbook_manager.flash_report_sheets or []
+        if not flash_report_sheets:
+            QMessageBox.warning(self, "警告", "没有待写入表（快报表），无法导出")
+            return
 
-            self.calculation_engine = create_calculation_engine(self.workbook_manager)
-
+        # 获取保存路径
         file_path, _ = QFileDialog.getSaveFileName(
             self, "保存Excel文件", "", "Excel Files (*.xlsx);;All Files (*)"
         )
@@ -4765,22 +4855,120 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            self.log_manager.info(f"开始导出到: {file_path}")
+            import time
+            import os
+            start_time = time.time()
 
-            success = self.calculation_engine.export_to_excel(file_path)
+            # 记录操作日志
+            file_name = os.path.basename(file_path)
+            flash_count = len(flash_report_sheets)
+            self.log_manager.operation(f"📤 导出Excel: {file_name} ({flash_count}个待写入表)")
 
-            if success:
-                self.log_manager.success(f"导出成功: {file_path}")
-                QMessageBox.information(
-                    self, "导出完成", f"数据已导出到：\n<b>{file_path}</b>"
+            # 使用新的智能公式导出器
+            from modules.excel_exporter import ExcelFormulaWriter, ExportOptions
+
+            writer = ExcelFormulaWriter()
+            options = ExportOptions(
+                include_metadata_sheet=False,  # ❌ 不要添加元数据工作表
+                preserve_values_on_error=True,
+                auto_validate=False,  # 暂不自动验证，避免需要Excel计算引擎
+                error_handling_mode="preserve",  # 转换失败时保留计算值
+                use_absolute_path=False,  # ❌ 使用相对引用，不要绝对路径
+                add_formula_comments=False
+            )
+
+            # 导出所有待写入表
+            self.log_manager.system(f"处理{flash_count}个待写入表...")
+            result = writer.export_all_flash_reports_with_formulas(
+                workbook_manager=self.workbook_manager,
+                output_path=file_path,
+                options=options
+            )
+
+            if result.success:
+                # 记录导出成功（带详细统计和耗时）
+                elapsed = time.time() - start_time
+                success_rate = (result.converted_formulas / result.total_formulas * 100) if result.total_formulas > 0 else 0
+                self.log_manager.success(
+                    f"✅ 导出完成: {flash_count}个表, {result.total_formulas}个公式, "
+                    f"{result.converted_formulas}个成功 ({success_rate:.0f}%) (耗时: {elapsed:.1f}秒)"
                 )
+
+                # 生成详细的成功消息
+                success_rate = (result.converted_formulas / result.total_formulas * 100) if result.total_formulas > 0 else 0
+                detail_msg = (
+                    f"数据已导出到：\n<b>{file_path}</b>\n\n"
+                    f"导出的待写入表: {len(flash_report_sheets)} 个\n"
+                    f"  ({', '.join(flash_report_sheets)})\n\n"
+                    f"总公式数: {result.total_formulas}\n"
+                    f"成功转换: {result.converted_formulas} ({success_rate:.1f}%)\n"
+                    f"失败转换: {len(result.failed_conversions)}\n"
+                    f"耗时: {result.execution_time:.2f}秒"
+                )
+
+                if result.failed_conversions:
+                    self.log_manager.warning(f"有 {len(result.failed_conversions)} 个公式转换失败，已使用计算值替代")
+
+                    # 生成失败报告文件名
+                    base_path = os.path.splitext(file_path)[0]
+                    report_path = f"{base_path}_导出失败报告.txt"
+
+                    # 统计错误类型
+                    error_types = {}
+                    for error in result.failed_conversions:
+                        error_type = error.error_type
+                        if error_type not in error_types:
+                            error_types[error_type] = 0
+                        error_types[error_type] += 1
+
+                    # 构建详细的失败信息
+                    detail_msg += f"\n\n⚠️ {len(result.failed_conversions)} 个公式转换失败，已使用计算值替代\n\n"
+                    detail_msg += "失败原因统计：\n"
+                    for error_type, count in error_types.items():
+                        error_type_cn = {
+                            "cell_not_found": "未找到单元格",
+                            "syntax_error": "语法错误",
+                            "reference_error": "引用错误",
+                            "security_error": "安全错误",
+                            "cell_bounds_error": "单元格越界"
+                        }.get(error_type, error_type)
+                        detail_msg += f"  • {error_type_cn}: {count} 个\n"
+
+                    detail_msg += f"\n前 {min(5, len(result.failed_conversions))} 个失败示例：\n"
+                    for i, error in enumerate(result.failed_conversions[:5], 1):
+                        target_name = error.target_item.name if error.target_item else "未知"
+                        target_cell = error.target_item.target_cell_address if error.target_item else "未知"
+                        detail_msg += f"{i}. {target_name} ({target_cell})\n"
+                        detail_msg += f"   错误: {error.error_message[:60]}...\n" if len(error.error_message) > 60 else f"   错误: {error.error_message}\n"
+
+                    if len(result.failed_conversions) > 5:
+                        detail_msg += f"\n...还有 {len(result.failed_conversions) - 5} 个失败项\n"
+
+                    detail_msg += f"\n详细失败报告已保存到：\n<b>{report_path}</b>"
+
+                QMessageBox.information(self, "导出完成", detail_msg)
             else:
                 self.log_manager.error("导出失败")
-                QMessageBox.warning(self, "失败", "导出失败，请查看日志")
+
+                error_details = "导出失败，详细信息：\n\n"
+                if result.failed_conversions:
+                    error_details += f"失败的公式数: {len(result.failed_conversions)}\n"
+                    # 显示前3个错误
+                    for i, error in enumerate(result.failed_conversions[:3]):
+                        error_details += f"\n{i+1}. {error.error_message}\n"
+                    if len(result.failed_conversions) > 3:
+                        error_details += f"\n...还有 {len(result.failed_conversions) - 3} 个错误"
+
+                QMessageBox.warning(self, "导出失败", error_details)
 
         except Exception as e:
             error_msg = f"导出Excel时发生异常: {str(e)}"
             self.log_manager.error(error_msg)
+
+            import traceback
+            traceback_str = traceback.format_exc()
+            self.log_manager.error(f"详细错误:\n{traceback_str}")
+
             QMessageBox.critical(self, "错误", error_msg)
         finally:
             self.update_toolbar_states()
@@ -4818,10 +5006,11 @@ class MainWindow(QMainWindow):
         if not current.isValid():
             if hasattr(self, "property_table"):
                 self.property_table.set_properties({})
-            # 阻止信号，避免触发公式更新循环
-            self.formula_editor.blockSignals(True)
-            self.formula_editor.setPlainText("")
-            self.formula_editor.blockSignals(False)
+            # 阻止信号，避免触发公式更新循环 - 已删除（单元格检查TAB已移除）
+            # if hasattr(self, "formula_editor") and self.formula_editor:
+            #     self.formula_editor.blockSignals(True)
+            #     self.formula_editor.setPlainText("")
+            #     self.formula_editor.blockSignals(False)
             self.show_target_source_message("请选择目标项以查看来源详情。")
             return
 
@@ -4853,10 +5042,11 @@ class MainWindow(QMainWindow):
         if mapping and mapping.formula:
             selected_formula = mapping.formula
 
-        # 阻止信号，避免触发公式更新循环
-        self.formula_editor.blockSignals(True)
-        self.formula_editor.setPlainText(selected_formula)
-        self.formula_editor.blockSignals(False)
+        # 阻止信号，避免触发公式更新循环 - 已删除（单元格检查TAB已移除）
+        # if hasattr(self, "formula_editor") and self.formula_editor:
+        #     self.formula_editor.blockSignals(True)
+        #     self.formula_editor.setPlainText(selected_formula)
+        #     self.formula_editor.blockSignals(False)
 
         self.update_target_source_panel(item)
 
@@ -5303,10 +5493,6 @@ class MainWindow(QMainWindow):
                 self.target_model.layoutChanged.emit()
             self.log_manager.info("已清除所有公式")
 
-    def recalculate(self):
-        """重新计算"""
-        self.calculate_preview()
-
     def reset_layout(self):
         """重置布局"""
         self.log_manager.info("布局重置功能开发中...")
@@ -5654,12 +5840,33 @@ class MainWindow(QMainWindow):
                     ):
                         ai_status = "经过"
 
-            summary = (
-                f"来源数量:{total_sources}个，当前项{ai_status}AI解析，"
-                f"AI回报回归率:{confidence_text}，AI认为回报率理由为:{reasoning_text}"
+            # 使用HTML格式化文本，添加间距和下划线
+            summary_lines: List[str] = []
+            line_style = "font-size:13px;color:#000;margin-bottom:12px;"
+
+            confidence_display = confidence_text if confidence_text != "--" else confidence_text
+            reasoning_display = reasoning_text if reasoning_text != "--" else reasoning_text
+
+            separator = '；' + '&nbsp;' * 10
+            summary_lines.append(
+                f'<div style="{line_style}">来源数量：<u>{total_sources}个</u>'
+                f'{separator}'
+                f'AI回报回归率：<u>{confidence_display}</u></div>'
             )
+
+            summary_lines.append(
+                f'<div style="{line_style}">当前项经过AI解析状态：<u>{ai_status}</u>'
+                f'{separator}'
+                f'AI认为回报率理由为：<u>{reasoning_display}</u></div>'
+            )
+
             if missing_count:
-                summary += f"（{missing_count} 个来源缺失）"
+                summary_lines.append(
+                    f'<div style="{line_style}color:#ff6b6b;">存在<u>{missing_count}个</u>来源缺失</div>'
+                )
+
+            summary = "".join(summary_lines)
+
             self.target_source_description.setText(summary)
 
     def _extract_source_value_for_key(
@@ -6553,6 +6760,37 @@ class MainWindow(QMainWindow):
                 f"无法启动 AI 助手:\n{str(e)}\n\n请检查 API 配置。"
             )
 
+    def _on_main_analysis_auto_parse(self):
+        """主界面分析面板：一键解析"""
+        if not self.chat_controller:
+            QMessageBox.warning(self, "提示", "AI服务未初始化")
+            return
+
+        # 显示AI助手窗口并触发一键解析
+        self.chat_controller.show_chat_window()
+        # 触发AI助手窗口的一键解析功能
+        if self.chat_controller.chat_window:
+            # 通过信号触发
+            self.chat_controller.chat_window.sidebar.analysis_auto_parse_requested.emit()
+
+    def _on_main_analysis_export_json(self):
+        """主界面分析面板：导出JSON"""
+        if not self.chat_controller:
+            QMessageBox.warning(self, "提示", "AI服务未初始化")
+            return
+
+        # 直接调用chat_controller的导出JSON方法
+        self.chat_controller._on_analysis_export_json_requested()
+
+    def _on_main_analysis_apply(self):
+        """主界面分析面板：解析应用"""
+        if not self.chat_controller:
+            QMessageBox.warning(self, "提示", "AI服务未初始化")
+            return
+
+        # 直接调用chat_controller的解析应用方法
+        self.chat_controller._on_analysis_apply_requested()
+
     def show_about(self):
         """显示关于信息"""
         QMessageBox.about(
@@ -6593,6 +6831,11 @@ def main():
     app.setApplicationName("AI财务报表工具")
     app.setApplicationVersion("1.0")
     app.setOrganizationName("FinancialTool")
+
+    # 设置应用程序图标（关键！这样所有窗口都会使用这个图标）
+    icon_path = Path("icon.ico")
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
 
     # 创建主窗口
     window = MainWindow()

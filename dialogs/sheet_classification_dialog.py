@@ -18,65 +18,100 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QMimeData, QSize, QPropertyAnimation, QEasingCurve, QRect, QTimer
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QDrag, QPixmap, QPainter, QFont, QColor, QLinearGradient, QPalette
 
+# 导入ToggleSwitch
+from components.chat.widgets.common_widgets import ToggleSwitch
 
-class CheckMarkWidget(QCheckBox):
-    """√和x样式的复选框"""
 
-    def __init__(self, parent=None):
+class ArrowButton(QPushButton):
+    """自定义绘制的大箭头按钮"""
+
+    def __init__(self, direction: str, color: str, parent=None):
+        """
+        Args:
+            direction: 'left' 或 'right'
+            color: 箭头颜色（十六进制）
+        """
         super().__init__(parent)
-        self.setFixedSize(24, 24)
+        self.direction = direction
+        self.base_color = QColor(color)
+        self.hover_color = QColor(color).lighter(120)
+        self.pressed_color = QColor(color).darker(120)
+        self.current_color = self.base_color
+        self._hovered = False
 
-        # 设置√和x样式 - 修复定位问题
-        self.setStyleSheet("""
-            QCheckBox {
-                spacing: 0px;
-                margin: 0px;
-                padding: 0px;
-            }
-            QCheckBox::indicator {
-                width: 22px;
-                height: 22px;
-                border-radius: 11px;
-                border: 2px solid #e74c3c;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #ffffff, stop:1 #f8f9fa);
-                margin: 0px;
-                padding: 0px;
-            }
-            QCheckBox::indicator:unchecked {
-                border: 2px solid #e74c3c;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #ffffff, stop:1 #ffeaea);
-            }
-            QCheckBox::indicator:checked {
-                border: 2px solid #27ae60;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #2ecc71, stop:1 #27ae60);
-                color: white;
-            }
-        """)
+        self.setFixedSize(84, 84)  # 120的70% = 84
+        self.setCursor(Qt.PointingHandCursor)
+        self.setStyleSheet("QPushButton { background: transparent; border: none; }")
+
+    def enterEvent(self, event):
+        """鼠标进入"""
+        self._hovered = True
+        self.current_color = self.hover_color
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        """鼠标离开"""
+        self._hovered = False
+        self.current_color = self.base_color
+        self.update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        """鼠标按下"""
+        self.current_color = self.pressed_color
+        self.update()
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        """鼠标释放"""
+        self.current_color = self.hover_color if self._hovered else self.base_color
+        self.update()
+        super().mouseReleaseEvent(event)
 
     def paintEvent(self, event):
-        """自定义绘制√和x符号"""
-        super().paintEvent(event)
-
+        """自定义绘制大箭头"""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # 获取checkbox的rect
-        rect = self.rect()
-        center_x = rect.width() // 2
-        center_y = rect.height() // 2
+        # 设置画笔
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(self.current_color)
 
-        # 设置字体和颜色
-        painter.setFont(QFont("Arial", 12, QFont.Bold))
+        # 计算箭头坐标
+        width = self.width()
+        height = self.height()
+        center_x = width // 2
+        center_y = height // 2
 
-        if self.isChecked():
-            painter.setPen(QColor(255, 255, 255))  # 白色
-            painter.drawText(rect, Qt.AlignCenter, "✓")
+        # 绘制箭头（使用多边形，70%大小）
+        if self.direction == 'left':
+            # 向左箭头 ◀ (70%大小)
+            points = [
+                (center_x - 21, center_y),       # 箭头尖端
+                (center_x + 14, center_y - 28),  # 上边
+                (center_x + 14, center_y - 10),  # 上内
+                (center_x + 3, center_y),        # 中间
+                (center_x + 14, center_y + 10),  # 下内
+                (center_x + 14, center_y + 28),  # 下边
+            ]
         else:
-            painter.setPen(QColor(231, 76, 60))  # 红色
-            painter.drawText(rect, Qt.AlignCenter, "×")
+            # 向右箭头 ▶ (70%大小)
+            points = [
+                (center_x + 21, center_y),       # 箭头尖端
+                (center_x - 14, center_y - 28),  # 上边
+                (center_x - 14, center_y - 10),  # 上内
+                (center_x - 3, center_y),        # 中间
+                (center_x - 14, center_y + 10),  # 下内
+                (center_x - 14, center_y + 28),  # 下边
+            ]
+
+        # 转换为QPoint
+        from PySide6.QtCore import QPoint
+        qpoints = [QPoint(x, y) for x, y in points]
+
+        # 绘制箭头
+        painter.drawPolygon(qpoints)
 
 
 class ModernSheetItem(QWidget):
@@ -91,95 +126,65 @@ class ModernSheetItem(QWidget):
         self.setup_ui()
 
     def setup_ui(self):
-        """设置现代化界面"""
+        """设置现代化界面 - 使用Toggle开关"""
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
+        # 去掉所有margins，确保完美对齐
+        layout.setContentsMargins(10, 0, 10, 0)
         layout.setSpacing(12)
 
-        self.setMinimumHeight(56)
+        # 设置固定高度，确保与item高度一致
+        self.setFixedHeight(44)
 
-        # 使用新的√/x复选框
-        self.checkbox = CheckMarkWidget()
-        self.checkbox.setChecked(True)
-        self.checkbox.toggled.connect(lambda checked: self.toggled.emit(self.sheet_name, checked))
-        layout.addWidget(self.checkbox, 0, Qt.AlignCenter)
+        # Toggle开关（替换checkbox）
+        self.toggle = ToggleSwitch()
+        self.toggle.setChecked(True)
+        self.toggle.toggled.connect(lambda checked: self.toggled.emit(self.sheet_name, checked))
+        layout.addWidget(self.toggle, 0, Qt.AlignVCenter)  # 垂直居中
 
-        # 分类图标
-        icon_label = QLabel(self.get_category_icon())
-        icon_label.setStyleSheet("""
-            QLabel {
-                font-size: 14px;
-                color: #34495e;
-                background: transparent;
-                padding: 2px;
-                min-width: 20px;
-                text-align: center;
-            }
-        """)
-        layout.addWidget(icon_label, 0, Qt.AlignCenter)
-
-        # 工作表名称
+        # 工作表名称（去掉图标，去掉边框，支持自动换行）
         self.name_label = QLabel(self.sheet_name)
-        self.name_label.setWordWrap(True)
+        self.name_label.setWordWrap(True)  # 启用自动换行
         self.name_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-        self.name_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self.name_label.setMinimumHeight(self.name_label.fontMetrics().height() + 12)
+        self.name_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         self.name_label.setStyleSheet("""
             QLabel {
-                font-size: 13px;
+                font-size: 14px;
                 font-weight: 500;
                 color: #2c3e50;
                 background: transparent;
-                padding: 6px 8px;
-                border-radius: 6px;
+                border: none;
+                padding: 0px;
+                margin: 0px;
             }
         """)
-        layout.addWidget(self.name_label, 1, Qt.AlignVCenter)
+        layout.addWidget(self.name_label, 1)
 
-        # 移除整体项目的边框，只保留背景和悬停效果
+        # 整体样式（完全去掉padding和margin）
         self.setStyleSheet("""
             ModernSheetItem {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #ffffff, stop:1 #f8f9fa);
+                background: transparent;
                 border: none;
-                border-radius: 6px;
-                margin: 1px;
-                padding: 2px;
+                border-radius: 4px;
+                margin: 0px;
+                padding: 0px;
             }
             ModernSheetItem:hover {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #fef2f8, stop:1 #fce8f3);
-                border: 1px solid #eb91be;
             }
         """)
 
-        # 添加微妙阴影
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(3)
-        shadow.setColor(QColor(0, 0, 0, 10))
-        shadow.setOffset(0, 1)
-        self.setGraphicsEffect(shadow)
-
     def sizeHint(self):
-        hint = super().sizeHint()
-        name_height = self.name_label.sizeHint().height() if hasattr(self, 'name_label') else 0
-        total_height = max(hint.height(), name_height + 24)
-        return QSize(hint.width(), total_height)
-
-    def get_category_icon(self) -> str:
-        """获取分类图标"""
-        if self.category == "flash_reports":
-            return "📊"
-        else:
-            return "📋"
+        """返回固定高度，确保完美对齐"""
+        return QSize(self.width(), 44)
 
     def is_checked(self) -> bool:
         """获取勾选状态"""
-        return self.checkbox.isChecked()
+        return self.toggle.isChecked()
 
     def set_checked(self, checked: bool):
         """设置勾选状态"""
-        self.checkbox.setChecked(checked)
+        self.toggle.setChecked(checked)
 
 
 class ModernDragDropList(QListWidget):
@@ -199,7 +204,7 @@ class ModernDragDropList(QListWidget):
         self.setAcceptDrops(True)
         self.setDragEnabled(True)
 
-        # 现代化样式
+        # 现代化样式 - 精确对齐（item高度=widget高度）
         self.setStyleSheet("""
             QListWidget {
                 border: 2px solid #bdc3c7;
@@ -211,17 +216,22 @@ class ModernDragDropList(QListWidget):
                 outline: none;
             }
             QListWidget::item {
-                padding: 2px;
+                padding: 0px;
                 margin: 2px 0px;
                 border: none;
                 background: transparent;
-                border-radius: 6px;
-                min-height: 32px;
+                border-radius: 4px;
+                min-height: 44px;
+                max-height: 44px;
             }
             QListWidget::item:selected {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #fef2f8, stop:1 #f8d5ea);
                 border: 2px solid #eb91be;
+                padding: 0px;
+                margin: 2px 0px;
+                min-height: 44px;
+                max-height: 44px;
             }
             QScrollBar:vertical {
                 border: none;
@@ -238,6 +248,9 @@ class ModernDragDropList(QListWidget):
                 background: #7f8c8d;
             }
         """)
+
+        # 禁用水平滚动条
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
     def add_sheet_item(self, sheet_name: str):
         """添加工作表项目"""
@@ -314,7 +327,7 @@ class ModernDragDropList(QListWidget):
 
     def dragLeaveEvent(self, event):
         """拖拽离开事件"""
-        # 恢复原始样式
+        # 恢复原始样式（与初始化时完全一致）
         self.setStyleSheet("""
             QListWidget {
                 border: 2px solid #bdc3c7;
@@ -326,17 +339,22 @@ class ModernDragDropList(QListWidget):
                 outline: none;
             }
             QListWidget::item {
-                padding: 2px;
+                padding: 0px;
                 margin: 2px 0px;
                 border: none;
                 background: transparent;
-                border-radius: 6px;
-                min-height: 32px;
+                border-radius: 4px;
+                min-height: 44px;
+                max-height: 44px;
             }
             QListWidget::item:selected {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #fef2f8, stop:1 #f8d5ea);
                 border: 2px solid #eb91be;
+                padding: 0px;
+                margin: 2px 0px;
+                min-height: 44px;
+                max-height: 44px;
             }
             QScrollBar:vertical {
                 border: none;
@@ -494,23 +512,16 @@ class SheetClassificationDialog(QDialog):
         return frame
 
     def create_classification_section(self):
-        """创建现代化分类区域"""
+        """创建现代化分类区域（去掉白色背景框）"""
         frame = QFrame()
+        # 去掉白色背景和边框，完全透明
         frame.setStyleSheet("""
             QFrame {
-                background: rgba(255, 255, 255, 0.98);
-                border-radius: 20px;
-                padding: 25px;
-                border: 1px solid rgba(189, 195, 199, 0.3);
+                background: transparent;
+                border: none;
+                padding: 0px;
             }
         """)
-
-        # 添加阴影
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(20)
-        shadow.setColor(QColor(0, 0, 0, 8))
-        shadow.setOffset(0, 4)
-        frame.setGraphicsEffect(shadow)
 
         main_layout = QHBoxLayout(frame)
         main_layout.setSpacing(30)
@@ -573,76 +584,30 @@ class SheetClassificationDialog(QDialog):
         return container
 
     def create_arrow_buttons(self):
-        """创建现代化箭头按钮"""
+        """创建超大号自定义箭头按钮"""
         container = QFrame()
-        container.setFixedWidth(100)
+        container.setFixedWidth(100)  # 84+边距
+        # 完全透明
         container.setStyleSheet("""
             QFrame {
                 background: transparent;
+                border: none;
             }
         """)
 
         layout = QVBoxLayout(container)
         layout.setAlignment(Qt.AlignCenter)
-        layout.setSpacing(20)
+        layout.setSpacing(50)  # 箭头间距
 
-        # 向左箭头 (数据源 -> 快报)
-        left_btn = QPushButton("◀")
-        left_btn.setFixedSize(60, 60)
-        left_btn.setFont(QFont("Arial", 20, QFont.Bold))
-        left_btn.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #e74c3c, stop:1 #c0392b);
-                color: white;
-                border: none;
-                border-radius: 30px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #ec7063, stop:1 #e74c3c);
-            }
-            QPushButton:pressed {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #c0392b, stop:1 #a93226);
-            }
-        """)
+        # 向左箭头 (数据源 -> 快报) - 自定义绘制的大箭头
+        left_btn = ArrowButton('left', '#e74c3c')
         left_btn.setToolTip("移至快报表")
         left_btn.clicked.connect(self.move_to_flash_reports)
 
-        # 向右箭头 (快报 -> 数据源)
-        right_btn = QPushButton("▶")
-        right_btn.setFixedSize(60, 60)
-        right_btn.setFont(QFont("Arial", 20, QFont.Bold))
-        right_btn.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #3498db, stop:1 #2980b9);
-                color: white;
-                border: none;
-                border-radius: 30px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #5dade2, stop:1 #3498db);
-            }
-            QPushButton:pressed {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #2980b9, stop:1 #21618c);
-            }
-        """)
+        # 向右箭头 (快报 -> 数据源) - 自定义绘制的大箭头
+        right_btn = ArrowButton('right', '#3498db')
         right_btn.setToolTip("移至数据来源表")
         right_btn.clicked.connect(self.move_to_data_sources)
-
-        # 添加现代化阴影
-        for btn in [left_btn, right_btn]:
-            shadow = QGraphicsDropShadowEffect()
-            shadow.setBlurRadius(15)
-            shadow.setColor(QColor(0, 0, 0, 40))
-            shadow.setOffset(0, 5)
-            btn.setGraphicsEffect(shadow)
 
         layout.addWidget(left_btn)
         layout.addWidget(right_btn)

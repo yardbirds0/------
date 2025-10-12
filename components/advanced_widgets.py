@@ -78,7 +78,7 @@ from utils.excel_utils import (
     parse_formula_references_v2,
     build_formula_reference_three_segment,
     parse_formula_references_three_segment,
-    validate_formula_syntax_three_segment
+    validate_formula_syntax_three_segment,
 )
 
 
@@ -86,9 +86,11 @@ ROW_NUMBER_COLUMN_WIDTH = 70  # "行次"列固定宽度
 
 
 def ensure_interactive_header(
-    header: Optional[QHeaderView], stretch_last: bool = False, minimum_size: int = 40
+    header: Optional[QHeaderView],
+    stretch_last: bool = False,
+    minimum_size: Optional[int] = None,
 ) -> None:
-    """确保表头支持拖动列宽并可选地保持最后一列自适应"""
+    """ȷ����ͷ֧���϶��п�����ѡ�ر������һ������Ӧ"""
     if header is None:
         return
 
@@ -96,8 +98,13 @@ def ensure_interactive_header(
     header.setSectionsClickable(True)
     header.setHighlightSections(False)
     header.setStretchLastSection(stretch_last)
-    if minimum_size is not None:
-        header.setMinimumSectionSize(max(1, minimum_size))
+
+    metrics = QFontMetrics(header.font())
+    if minimum_size is None:
+        minimum_size = max(32, metrics.height() + 10)
+
+    header.setMinimumSectionSize(max(1, minimum_size))
+    header.setMinimumHeight(max(header.minimumHeight(), minimum_size))
 
 
 def schedule_row_resize(view: Any, delay_ms: int = 80) -> None:
@@ -1081,7 +1088,7 @@ class FormulaEditor(QTextEdit):
         if text.endswith("]!["):
             # 解析前面的工作表名
             # 匹配最后一个 [工作表名]![ 模式
-            match = re.search(r'\[([^\]]+)\]!\[$', text)
+            match = re.search(r"\[([^\]]+)\]!\[$", text)
             if match:
                 sheet_name = match.group(1).strip()
                 return f"items:{sheet_name}"
@@ -1090,7 +1097,7 @@ class FormulaEditor(QTextEdit):
         if text.endswith("]![]!["):
             # 解析前面的工作表名和项目名
             # 匹配最后一个 [工作表名]![项目名]![ 模式
-            match = re.search(r'\[([^\]]+)\]!\[([^\]]+)\]!\[$', text)
+            match = re.search(r"\[([^\]]+)\]!\[([^\]]+)\]!\[$", text)
             if match:
                 sheet_name = match.group(1).strip()
                 item_name = match.group(2).strip()
@@ -1159,7 +1166,9 @@ class FormulaEditor(QTextEdit):
                 for source in self.workbook_manager.source_items.values():
                     if source.sheet_name == sheet_name and source.name == item_name:
                         # 从source.values字典中获取所有列名
-                        if hasattr(source, 'values') and isinstance(source.values, dict):
+                        if hasattr(source, "values") and isinstance(
+                            source.values, dict
+                        ):
                             return list(source.values.keys())
                         break
             return []
@@ -1214,20 +1223,24 @@ class FormulaEditor(QTextEdit):
         # 判断1: 工作表名补全 - 检查是否刚输入了 [
         if text_before_cursor.endswith("[") and not text_before_cursor.endswith("]!["):
             # 三段式格式: 插入工作表名后加 ]![
-            cursor.insertText(f'{text}]![')
+            cursor.insertText(f"{text}]![")
 
         # 判断2: 项目名补全 - 检查是否刚输入了 ]![
         elif text_before_cursor.endswith("]!["):
             # 三段式格式: 插入项目名后加 ]![
-            cursor.insertText(f'{text}]![')
+            cursor.insertText(f"{text}]![")
 
         # 判断3: 列名补全 - 检查是否刚输入了 ]![]![
         elif text_before_cursor.endswith("]![]!["):
             # 三段式格式: 插入列名后加 ] 并在后面添加空格
-            cursor.insertText(f'{text}] ')
+            cursor.insertText(f"{text}] ")
 
         # 兼容旧格式1: 工作表名补全(旧格式)
-        elif cursor_pos > 0 and current_text[cursor_pos - 1] == "[" and ':"' not in text_before_cursor[-10:]:
+        elif (
+            cursor_pos > 0
+            and current_text[cursor_pos - 1] == "["
+            and ':"' not in text_before_cursor[-10:]
+        ):
             # 旧格式: 插入 :"
             cursor.insertText(f'{text}:"')
 
@@ -1361,10 +1374,9 @@ class FormulaSyntaxHighlighter(QSyntaxHighlighter):
         three_segment_format = QTextCharFormat()
         three_segment_format.setForeground(QColor(0, 120, 215))  # 蓝色
         three_segment_format.setFontWeight(QFont.Bold)
-        self.highlighting_rules.append((
-            r'\[([^\]]+)\]!\[([^\]]+)\]!\[([^\]]+)\]',
-            three_segment_format
-        ))
+        self.highlighting_rules.append(
+            (r"\[([^\]]+)\]!\[([^\]]+)\]!\[([^\]]+)\]", three_segment_format)
+        )
 
         # ==================== 旧格式兼容高亮 ====================
 
@@ -1531,7 +1543,8 @@ class ColumnConfigDialog(QDialog):
         self.resize(580, 620)
 
         # 应用玻璃主题样式
-        self.setStyleSheet("""
+        self.setStyleSheet(
+            """
             QDialog {
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
@@ -1575,7 +1588,8 @@ class ColumnConfigDialog(QDialog):
                 border: none;
                 border-right: 1px solid rgba(235, 145, 190, 0.2);
                 border-bottom: 1px solid rgba(235, 145, 190, 0.3);
-                padding: 6px;
+                padding: 3px 8px;
+                min-height: 0px;
             }
             QPushButton {
                 background: qlineargradient(
@@ -1601,7 +1615,8 @@ class ColumnConfigDialog(QDialog):
             QPushButton:pressed {
                 background: rgba(235, 145, 190, 0.5);
             }
-        """)
+        """
+        )
 
         layout = QVBoxLayout(self)
         layout.setSpacing(16)
@@ -1659,7 +1674,8 @@ class ColumnConfigDialog(QDialog):
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)
         # 添加网格线样式
-        self.table.setStyleSheet("""
+        self.table.setStyleSheet(
+            """
             QTableWidget {
                 gridline-color: #d0d0d0;
                 border: 1px solid #dee2e6;
@@ -1669,7 +1685,8 @@ class ColumnConfigDialog(QDialog):
                 padding: 4px;
                 border: none;
             }
-        """)
+        """
+        )
         self.table.setShowGrid(True)  # 确保显示网格线
 
         layout.addWidget(self.table)
@@ -1708,7 +1725,7 @@ class ColumnConfigDialog(QDialog):
                 entry = {
                     "name": header,
                     "enabled": True,
-                    "editable": header not in readonly_columns
+                    "editable": header not in readonly_columns,
                 }
                 ordered_entries.append(entry)
                 config_map[header] = entry
@@ -1731,12 +1748,14 @@ class ColumnConfigDialog(QDialog):
             # ✅ 显示复选框（第1列）- 使用真正的QCheckBox widget
             visible_checkbox = QCheckBox()
             visible_checkbox.setChecked(enabled)
-            visible_checkbox.setStyleSheet("""
+            visible_checkbox.setStyleSheet(
+                """
                 QCheckBox::indicator {
                     width: 20px;
                     height: 20px;
                 }
-            """)
+            """
+            )
             # 创建一个容器widget来居中复选框
             visible_widget = QWidget()
             visible_layout = QHBoxLayout(visible_widget)
@@ -1754,12 +1773,14 @@ class ColumnConfigDialog(QDialog):
             editable_checkbox = QCheckBox()
             editable_checkbox.setChecked(editable)
             editable_checkbox.setEnabled(enabled)  # 如果列不可见，禁用可编辑复选框
-            editable_checkbox.setStyleSheet("""
+            editable_checkbox.setStyleSheet(
+                """
                 QCheckBox::indicator {
                     width: 20px;
                     height: 20px;
                 }
-            """)
+            """
+            )
             # 创建一个容器widget来居中复选框
             editable_widget = QWidget()
             editable_layout = QHBoxLayout(editable_widget)
@@ -1822,7 +1843,11 @@ class ColumnConfigDialog(QDialog):
             if visible_widget and editable_widget:
                 visible_checkbox = visible_widget.findChild(QCheckBox)
                 editable_checkbox = editable_widget.findChild(QCheckBox)
-                if visible_checkbox and editable_checkbox and visible_checkbox.isChecked():
+                if (
+                    visible_checkbox
+                    and editable_checkbox
+                    and visible_checkbox.isChecked()
+                ):
                     editable_checkbox.setChecked(True)
 
     def _set_all_readonly(self):
@@ -1859,13 +1884,14 @@ class ColumnConfigDialog(QDialog):
                 if editable_checkbox:
                     editable = editable_checkbox.isChecked()
 
-            selection.append({
-                "name": name,
-                "enabled": enabled,
-                "editable": editable,
-            })
+            selection.append(
+                {
+                    "name": name,
+                    "enabled": enabled,
+                    "editable": editable,
+                }
+            )
         return selection
-
 
 
 class SearchableSourceTree(DragDropTreeView):
@@ -1874,7 +1900,10 @@ class SearchableSourceTree(DragDropTreeView):
     # 添加工作表变化信号
     sheetChanged = Signal(str)
     # 添加三段式引用插入信号
-    threeSegmentReferenceRequested = Signal(str, str, str, str)  # (sheet, item, column, full_reference)
+    threeSegmentReferenceRequested = Signal(
+        str, str, str, str
+    )  # (sheet, item, column, full_reference)
+    columnConfigChanged = Signal(str)
 
     def __init__(self, parent=None):
         # 先初始化依赖字段，确保后续初始化流程可安全访问
@@ -1885,6 +1914,7 @@ class SearchableSourceTree(DragDropTreeView):
         self.available_sheets: List[str] = []
         self.sheet_column_configs: Dict[str, List[Dict[str, Any]]] = {}
         self.sheet_column_metadata: Dict[str, List[Dict[str, Any]]] = {}
+        self.double_click_popup_enabled: bool = True
 
         super().__init__(parent)
         self.setup_search()
@@ -1909,7 +1939,9 @@ class SearchableSourceTree(DragDropTreeView):
         self.sheet_combo.currentTextChanged.connect(self.on_sheet_changed)
 
         sheet_control_layout.addWidget(self.sheet_label)
-        sheet_control_layout.addWidget(self.sheet_combo, 1)  # ✅ 添加stretch factor让combobox占满空间
+        sheet_control_layout.addWidget(
+            self.sheet_combo, 1
+        )  # ✅ 添加stretch factor让combobox占满空间
 
         layout.addLayout(sheet_control_layout)
 
@@ -1942,6 +1974,69 @@ class SearchableSourceTree(DragDropTreeView):
         ensure_interactive_header(self.header(), stretch_last=False)
         ensure_word_wrap(self)
 
+    @staticmethod
+    def _normalize_header_name(name: Optional[str]) -> str:
+        """标准化列头名称，移除重复序号后缀"""
+        if not name:
+            return ""
+        normalized = re.sub(r"\s*\(\d+\)$", "", str(name)).strip()
+        return normalized or str(name).strip()
+
+    def _build_normalized_metadata(self, sheet_name: str) -> Dict[str, Dict[str, Any]]:
+        """根据标准化列头去重生成元数据映射"""
+        metadata = self._get_metadata_for_sheet(sheet_name)
+        if not metadata:
+            return {}
+
+        normalized_entries: Dict[str, Dict[str, Any]] = {}
+        for entry in metadata:
+            display = entry.get("display_name") or ""
+            normalized = entry.get("normalized_display") or self._normalize_header_name(
+                display
+            )
+            if not normalized:
+                continue
+            if normalized in normalized_entries:
+                continue
+
+            normalized_entry = dict(entry)
+            normalized_entry["display_name"] = normalized
+            normalized_entries[normalized] = normalized_entry
+
+        return normalized_entries
+
+    def _source_sort_key(self, item: Any) -> Tuple[int, int, int, str]:
+        """来源项排序规则：优先行次，其次原始行号"""
+        line_number = getattr(item, "line_number", None)
+        if isinstance(line_number, (int, float)):
+            return (
+                0,
+                int(line_number),
+                getattr(item, "row", 0),
+                getattr(item, "name", ""),
+            )
+        display_index = getattr(item, "display_index", "")
+        display_index_int = None
+        if isinstance(display_index, str) and display_index.isdigit():
+            display_index_int = int(display_index)
+        elif isinstance(display_index, (int, float)):
+            display_index_int = int(display_index)
+
+        if display_index_int is not None:
+            return (
+                1,
+                display_index_int,
+                getattr(item, "row", 0),
+                getattr(item, "name", ""),
+            )
+
+        return (
+            2,
+            getattr(item, "row", 0),
+            getattr(item, "raw_level", 0),
+            getattr(item, "name", ""),
+        )
+
     def open_column_config_dialog(self):
         """打开列配置弹窗"""
         sheet_name = self.current_sheet
@@ -1961,6 +2056,7 @@ class SearchableSourceTree(DragDropTreeView):
         if dialog.exec() == QDialog.Accepted:
             self.sheet_column_configs[sheet_name] = dialog.get_selection()
             self.refresh_display()
+            self.columnConfigChanged.emit(sheet_name)
 
     def _get_items_for_sheet(self, sheet_name: str) -> Dict[str, Any]:
         if not sheet_name:
@@ -2245,16 +2341,11 @@ class SearchableSourceTree(DragDropTreeView):
         model.setHorizontalHeaderLabels(active_headers)
         self.current_headers = active_headers
 
-        metadata = self._get_metadata_for_sheet(self.current_sheet or "")
-        metadata_by_display = {
-            entry.get("display_name"): entry
-            for entry in metadata
-            if entry.get("display_name")
-        }
+        normalized_metadata = self._build_normalized_metadata(self.current_sheet or "")
         dynamic_metadata: List[Dict[str, Any]] = [
-            metadata_by_display[name]
+            normalized_metadata[name]
             for name in active_headers
-            if name in metadata_by_display  # 不再需要排除base_headers
+            if name in normalized_metadata  # 不再需要排除base_headers
         ]
         base_count = 0  # 不再有基础列，所有列都是动态的
         layout_map, row_count = derive_header_layout_from_metadata(
@@ -2289,11 +2380,19 @@ class SearchableSourceTree(DragDropTreeView):
 
         headers = []  # 不再有基础列，完全基于元数据
         metadata = self._get_metadata_for_sheet(sheet_name)
+        seen: set[str] = set()
 
         for entry in metadata:
             display = entry.get("display_name")
-            if display and display not in headers:
-                headers.append(display)
+            normalized = entry.get("normalized_display") or self._normalize_header_name(
+                display
+            )
+            if not normalized:
+                continue
+            if normalized in seen:
+                continue
+            headers.append(normalized)
+            seen.add(normalized)
 
         # 如果元数据为空，从items中收集headers作为后备
         if not headers:
@@ -2309,18 +2408,26 @@ class SearchableSourceTree(DragDropTreeView):
             return headers  # 无配置时直接返回所有headers
 
         selection: List[str] = []
-        seen = set()
+        seen: set[str] = set()
+        header_lookup = {
+            self._normalize_header_name(header): header for header in headers
+        }
 
         for entry in config:
             name = entry.get("name")
-            if name in headers:
-                seen.add(name)
-                if entry.get("enabled", True) and name not in selection:
-                    selection.append(name)
+            normalized = self._normalize_header_name(name)
+            target_header = header_lookup.get(normalized)
+            if not target_header:
+                continue
+
+            seen.add(normalized)
+            if entry.get("enabled", True) and target_header not in selection:
+                selection.append(target_header)
 
         # 添加未在配置中的headers
         for header in headers:
-            if header not in seen and header not in selection:
+            normalized = self._normalize_header_name(header)
+            if normalized not in seen and header not in selection:
                 selection.append(header)
 
         return selection if selection else headers
@@ -2406,7 +2513,7 @@ class SearchableSourceTree(DragDropTreeView):
     ):
         """直接添加层级项目到模型（不使用sheet节点）"""
         # 按原始行号排序，保持原sheet顺序
-        sorted_items = sorted(items, key=lambda x: getattr(x, "row", 0))
+        sorted_items = sorted(items, key=self._source_sort_key)
 
         for item in sorted_items:
             row_map = self._create_item_row_enhanced(item, headers)
@@ -2424,7 +2531,7 @@ class SearchableSourceTree(DragDropTreeView):
     ):
         """直接添加平面项目到模型（不使用sheet节点）"""
         # 按原始行号排序，保持原sheet顺序
-        sorted_items = sorted(items, key=lambda x: getattr(x, "row", 0))
+        sorted_items = sorted(items, key=self._source_sort_key)
 
         for item in sorted_items:
             row_map = self._create_item_row_enhanced(item, headers)
@@ -2474,10 +2581,10 @@ class SearchableSourceTree(DragDropTreeView):
             formatted = self._format_value(value)
             data_item = QStandardItem(formatted)
             data_item.setEditable(False)
+            data_item.setData(item, Qt.UserRole)
 
-            # 如果是"项目名称"或"名称"列，设置层级缩进和UserRole
+            # 如果是"项目名称"或"名称"列，设置层级缩进
             if header in ["名称", "项目名称", "name", "项目"]:
-                data_item.setData(item, Qt.UserRole)
                 if hasattr(item, "hierarchy_level") and item.hierarchy_level > 0:
                     indent = "  " * item.hierarchy_level
                     display_name = f"{indent}{value}" if value else indent
@@ -2494,6 +2601,9 @@ class SearchableSourceTree(DragDropTreeView):
         需求: 用户双击来源项库中的项目时,弹出该项目所有列名的选择菜单,
              选择后将完整的三段式引用插入到当前激活的公式编辑器中
         """
+        if not getattr(self, "double_click_popup_enabled", True):
+            return super().mouseDoubleClickEvent(event)
+
         from PySide6.QtWidgets import QMenu
 
         # 获取双击的索引
@@ -2512,7 +2622,7 @@ class SearchableSourceTree(DragDropTreeView):
 
         # 方法1: 从UserRole获取(优先)
         item_data = model.data(index, Qt.UserRole)
-        if item_data and hasattr(item_data, 'sheet_name'):
+        if item_data and hasattr(item_data, "sheet_name"):
             source_item = item_data
 
         # 方法2: 从同行的其他列获取(备用)
@@ -2521,7 +2631,7 @@ class SearchableSourceTree(DragDropTreeView):
             for col in range(model.columnCount()):
                 alt_index = model.index(row, col)
                 alt_data = model.data(alt_index, Qt.UserRole)
-                if alt_data and hasattr(alt_data, 'sheet_name'):
+                if alt_data and hasattr(alt_data, "sheet_name"):
                     source_item = alt_data
                     break
 
@@ -2532,7 +2642,10 @@ class SearchableSourceTree(DragDropTreeView):
                 # 去除缩进空格
                 clean_text = str(display_text).strip()
                 for item in self.all_source_items.values():
-                    if item.name == clean_text or item.full_name_with_indent.strip() == clean_text:
+                    if (
+                        item.name == clean_text
+                        or item.full_name_with_indent.strip() == clean_text
+                    ):
                         source_item = item
                         break
 
@@ -2543,25 +2656,35 @@ class SearchableSourceTree(DragDropTreeView):
         # 检查是否有可用的列
         # 优先使用values字典,其次使用data_columns
         available_columns = {}
-        if hasattr(source_item, 'values') and isinstance(source_item.values, dict) and source_item.values:
+        if (
+            hasattr(source_item, "values")
+            and isinstance(source_item.values, dict)
+            and source_item.values
+        ):
             available_columns = source_item.values
-        elif hasattr(source_item, 'data_columns') and isinstance(source_item.data_columns, dict) and source_item.data_columns:
+        elif (
+            hasattr(source_item, "data_columns")
+            and isinstance(source_item.data_columns, dict)
+            and source_item.data_columns
+        ):
             available_columns = source_item.data_columns
 
         if not available_columns:
             # 如果没有多列数据,提示用户
             from PySide6.QtWidgets import QMessageBox
+
             QMessageBox.information(
                 self,
                 "提示",
-                f"来源项 '{source_item.name}' 没有可用的数据列\n请检查数据提取配置"
+                f"来源项 '{source_item.name}' 没有可用的数据列\n请检查数据提取配置",
             )
             super().mouseDoubleClickEvent(event)
             return
 
         # 创建列名选择菜单
         menu = QMenu(self)
-        menu.setStyleSheet("""
+        menu.setStyleSheet(
+            """
             QMenu {
                 background-color: white;
                 border: 1px solid #ccc;
@@ -2575,7 +2698,8 @@ class SearchableSourceTree(DragDropTreeView):
                 background-color: #4CAF50;
                 color: white;
             }
-        """)
+        """
+        )
 
         # 添加列名选项
         for column_name, column_value in available_columns.items():
@@ -2584,7 +2708,11 @@ class SearchableSourceTree(DragDropTreeView):
             if column_value is not None:
                 # 格式化值显示
                 if isinstance(column_value, (int, float)):
-                    display_text += f"  ({column_value:,.2f})" if isinstance(column_value, float) else f"  ({column_value:,})"
+                    display_text += (
+                        f"  ({column_value:,.2f})"
+                        if isinstance(column_value, float)
+                        else f"  ({column_value:,})"
+                    )
                 else:
                     value_str = str(column_value)[:20]  # 限制长度
                     display_text += f"  ({value_str})"
@@ -2595,24 +2723,30 @@ class SearchableSourceTree(DragDropTreeView):
                 lambda checked=False, cn=column_name: self._insert_three_segment_reference(
                     source_item.sheet_name,
                     source_item.name,  # 使用原始name,不包含缩进
-                    cn
+                    cn,
                 )
             )
 
         # 在鼠标位置显示菜单
         menu.exec_(event.globalPos())
 
-    def _insert_three_segment_reference(self, sheet_name: str, item_name: str, column_name: str):
+    def _insert_three_segment_reference(
+        self, sheet_name: str, item_name: str, column_name: str
+    ):
         """
         插入三段式引用到活跃的公式编辑器
 
         通过发送信号给main.py,由主窗口负责找到当前活跃的公式编辑器并插入引用
         """
         # 构建完整的三段式引用
-        full_reference = build_formula_reference_three_segment(sheet_name, item_name, column_name)
+        full_reference = build_formula_reference_three_segment(
+            sheet_name, item_name, column_name
+        )
 
         # 发送信号,让主窗口处理插入逻辑
-        self.threeSegmentReferenceRequested.emit(sheet_name, item_name, column_name, full_reference)
+        self.threeSegmentReferenceRequested.emit(
+            sheet_name, item_name, column_name, full_reference
+        )
 
 
 class PropertyTableWidget(QTableWidget):
@@ -2723,8 +2857,96 @@ def validate_formula(editor: FormulaEditor, status_label: QLabel):
         status_label.setText(f"公式无效: {str(e)}")
 
 
+class FormulaSearchHighlightDelegate(QStyledItemDelegate):
+    """搜索高亮委托，用于确保高亮颜色在自定义样式下仍可见"""
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.highlight_color = QColor("#ffe0f0")
+        self.search_text: str = ""
+
+    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex):
+        text = index.data(Qt.DisplayRole)
+        if not text:
+            return super().sizeHint(option, index)
+
+        metrics = QFontMetrics(option.font)
+        column_width = option.rect.width()
+
+        if column_width <= 0 and option.widget is not None:
+            try:
+                column_width = option.widget.columnWidth(index.column())
+            except Exception:
+                column_width = 200
+
+        available_width = max(40, column_width - 12)
+        text_height = metrics.boundingRect(
+            0,
+            0,
+            available_width,
+            0,
+            Qt.TextWordWrap,
+            str(text),
+        ).height()
+
+        total_height = text_height + 12
+        total_height = max(28, min(600, total_height))
+        return QSize(column_width, total_height)
+
+    def set_search_text(self, text: str):
+        normalized = text.lower() if text else ""
+        if self.search_text == normalized:
+            return
+        self.search_text = normalized
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "viewport"):
+            parent.viewport().update()
+
+    def paint(
+        self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex
+    ):
+        super().paint(painter, option, index)
+
+        highlight_color: Optional[QColor] = None
+
+        display_text = index.data(Qt.DisplayRole)
+        if self.search_text and display_text:
+            try:
+                display_lower = str(display_text).lower()
+            except Exception:
+                display_lower = str(display_text)
+            if self.search_text in display_lower:
+                highlight_color = QColor(self.highlight_color)
+
+        bg_data = index.data(Qt.BackgroundRole)
+        bg_color = None
+        if isinstance(bg_data, QColor):
+            bg_color = bg_data
+        elif isinstance(bg_data, QBrush):
+            bg_color = bg_data.color()
+
+        if bg_color and bg_color.isValid():
+            highlight_color = QColor(bg_color)
+
+        if not highlight_color:
+            return
+
+        painter.save()
+        highlight = QColor(highlight_color)
+        if highlight.alpha() == 255:
+            highlight.setAlpha(120)
+
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(highlight)
+        rect = option.rect.adjusted(1, 1, -1, -1)
+        painter.drawRoundedRect(rect, 4, 4)
+        painter.restore()
+
+
 class FormulaEditDialog(QDialog):
     """公式编辑对话框 - 双击弹出的高级公式编辑窗口"""
+
+    READ_ONLY_HEADERS = {"项目", "行次", "科目名称", "科目代码"}
 
     def __init__(
         self,
@@ -2739,6 +2961,13 @@ class FormulaEditDialog(QDialog):
         self.workbook_manager = workbook_manager
         self.column_key = column_key or "__default__"
         self.column_name = column_name or self.column_key
+
+        # 记录当前选中的来源项工作表
+        self.active_sheet_name: Optional[str] = getattr(target_item, "sheet_name", None)
+        self._readonly_headers_normalized = {
+            SearchableSourceTree._normalize_header_name(name)
+            for name in self.READ_ONLY_HEADERS
+        }
 
         # 初始化计算引擎
         from modules.calculation_engine import CalculationEngine
@@ -2756,6 +2985,14 @@ class FormulaEditDialog(QDialog):
         self.setMinimumSize(1200, 800)
         self.resize(1600, 900)
 
+        # 设置窗口标志，启用最小化和最大化按钮
+        self.setWindowFlags(
+            Qt.Window
+            | Qt.WindowMinimizeButtonHint
+            | Qt.WindowMaximizeButtonHint
+            | Qt.WindowCloseButtonHint
+        )
+
         layout = QVBoxLayout(self)
 
         # 公式输入行
@@ -2768,8 +3005,7 @@ class FormulaEditDialog(QDialog):
         )
         self.formula_input.textChanged.connect(self.on_formula_changed)
 
-        # 添加语法高亮
-        formula_layout.addWidget(QLabel("公式:"))
+        # 直接添加公式输入框，不添加"公式:"标签
         formula_layout.addWidget(self.formula_input)
 
         # 快捷按钮
@@ -2791,6 +3027,16 @@ class FormulaEditDialog(QDialog):
         button_layout.addWidget(self.multiply_btn)
         button_layout.addWidget(self.divide_btn)
         button_layout.addWidget(self.bracket_btn)
+
+        # 添加选中项按钮
+        self.add_item_btn = QPushButton("➕ 添加选中项")
+        self.add_item_btn.clicked.connect(self.add_selected_item)
+        button_layout.addWidget(self.add_item_btn)
+
+        self.add_batch_items_btn = QPushButton("➕ 批量添加选中项")
+        self.add_batch_items_btn.clicked.connect(self.add_batch_selected_items)
+        button_layout.addWidget(self.add_batch_items_btn)
+
         button_layout.addStretch()
 
         formula_layout.addLayout(button_layout)
@@ -2803,73 +3049,40 @@ class FormulaEditDialog(QDialog):
         data_group = QGroupBox("数据选择")
         data_layout = QVBoxLayout(data_group)
 
-        # Sheet选择
-        sheet_layout = QHBoxLayout()
-        sheet_layout.addWidget(QLabel("工作表:"))
-        self.sheet_combo = QComboBox()
-        self.sheet_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self.sheet_combo.setMinimumWidth(200)
-        self.sheet_combo.currentTextChanged.connect(self.on_sheet_changed)
-        sheet_layout.addWidget(self.sheet_combo)
-        data_layout.addLayout(sheet_layout)
+        self.data_tree = SearchableSourceTree()
+        self.data_tree.setDragEnabled(False)
+        self.data_tree.setAcceptDrops(False)
+        self.data_tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.data_tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.data_tree.double_click_popup_enabled = False
+        self.data_tree.threeSegmentReferenceRequested.connect(
+            self.on_tree_reference_requested
+        )
+        self.data_tree.sheetChanged.connect(self.on_tree_sheet_changed)
+        self.data_tree.doubleClicked.connect(self.on_tree_double_clicked)
+        self.data_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.data_tree.customContextMenuRequested.connect(self.on_tree_context_menu)
 
-        # 数据列表
-        self.data_table = QTableView()
-        self.data_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.data_table.doubleClicked.connect(self.on_data_double_clicked)
-        ensure_interactive_header(
-            self.data_table.horizontalHeader(), stretch_last=False
-        )
-        ensure_word_wrap(self.data_table)
-        # 设置自适应行高
-        self.data_table.verticalHeader().setSectionResizeMode(
-            QHeaderView.ResizeToContents
-        )
-        # 添加网格线样式
-        self.data_table.setStyleSheet("""
-            QTableView {
-                gridline-color: #d0d0d0;
-                border: 1px solid #dee2e6;
-                border-radius: 4px;
-            }
-            QTableView::item {
-                padding: 4px;
-                border: none;
-            }
-        """)
-        self.data_table.setShowGrid(True)  # 确保显示网格线
-        data_layout.addWidget(self.data_table)
+        self.data_tree_widget = self.data_tree.get_search_widget()
+        data_layout.addWidget(self.data_tree_widget)
 
         data_splitter.addWidget(data_group)
 
-        # 右侧：操作按钮
-        action_group = QGroupBox("操作")
-        action_layout = QVBoxLayout(action_group)
-
-        self.add_item_btn = QPushButton("➕ 添加选中项")
-        self.add_item_btn.clicked.connect(self.add_selected_item)
-
-        self.preview_btn = QPushButton("👁️ 预览计算")
-        self.preview_btn.clicked.connect(self.preview_calculation)
-
-        self.validate_btn = QPushButton("✅ 验证公式")
-        self.validate_btn.clicked.connect(self.validate_formula)
-
-        action_layout.addWidget(self.add_item_btn)
-        action_layout.addWidget(self.preview_btn)
-        action_layout.addWidget(self.validate_btn)
-        action_layout.addStretch()
-
-        data_splitter.addWidget(action_group)
-        data_splitter.setSizes([1100, 260])
-
         layout.addWidget(data_splitter)
 
-        # 预览结果 - 改为横向布局
-        preview_group = QGroupBox("预览")
-        preview_layout = QHBoxLayout(preview_group)
+        # 预览结果 - 改为横向布局，使用两个并列的QGroupBox
+        preview_container = QWidget()
+        preview_layout = QHBoxLayout(preview_container)
+        preview_layout.setSpacing(10)
+        preview_layout.setContentsMargins(0, 0, 0, 0)
 
-        # 左侧：来源显示表格
+        # 左侧：预览区块（使用QGroupBox）
+        preview_group = QGroupBox("预览")
+        preview_group_layout = QVBoxLayout(preview_group)
+        preview_group_layout.setSpacing(2)  # 减小间距，让表格紧贴标题
+        preview_group_layout.setContentsMargins(10, 20, 10, 10)  # 统一外边距
+
+        # 来源显示表格
         self.reference_table = QTableWidget()
         self.reference_table.setColumnCount(5)
         self.reference_table.setHorizontalHeaderLabels(
@@ -2890,7 +3103,8 @@ class FormulaEditDialog(QDialog):
             QHeaderView.ResizeToContents
         )
         # 添加网格线样式
-        self.reference_table.setStyleSheet("""
+        self.reference_table.setStyleSheet(
+            """
             QTableWidget {
                 gridline-color: #d0d0d0;
                 border: 1px solid #dee2e6;
@@ -2900,20 +3114,18 @@ class FormulaEditDialog(QDialog):
                 padding: 4px;
                 border: none;
             }
-        """)
-        self.reference_table.setShowGrid(True)  # 确保显示网格线
-        preview_layout.addWidget(self.reference_table, 2)  # 占2份空间
-
-        # 右侧：公式验证区块
-        validation_widget = QWidget()
-        validation_layout = QVBoxLayout(validation_widget)
-        validation_layout.setContentsMargins(0, 0, 0, 0)
-
-        validation_label = QLabel("公式检验")
-        validation_label.setStyleSheet(
-            "font-size: 12pt; font-weight: 600; padding: 4px;"
+        """
         )
-        validation_layout.addWidget(validation_label)
+        self.reference_table.setShowGrid(True)  # 确保显示网格线
+        preview_group_layout.addWidget(self.reference_table)
+
+        preview_layout.addWidget(preview_group, 2)  # 占2份空间
+
+        # 右侧：公式检验区块（使用QGroupBox）
+        validation_group = QGroupBox("公式检验")
+        validation_layout = QVBoxLayout(validation_group)
+        validation_layout.setSpacing(2)  # 减小间距，让文本框紧贴标题
+        validation_layout.setContentsMargins(10, 20, 10, 10)  # 统一外边距，与左侧对齐
 
         self.preview_formula_label = QLabel("公式预览将在这里显示")
         self.preview_formula_label.setStyleSheet(
@@ -2925,11 +3137,19 @@ class FormulaEditDialog(QDialog):
         )
         self.preview_formula_label.setWordWrap(True)
         self.preview_formula_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+
+        # 设置文本框的尺寸策略，让它垂直扩展填满空间
+        self.preview_formula_label.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Expanding  # 水平扩展  # 垂直扩展
+        )
+        # 设置最小高度，确保文本框有足够的可见区域
+        self.preview_formula_label.setMinimumHeight(150)
+
         validation_layout.addWidget(self.preview_formula_label)
 
-        preview_layout.addWidget(validation_widget, 1)  # 占1份空间
+        preview_layout.addWidget(validation_group, 1)  # 占1份空间
 
-        layout.addWidget(preview_group)
+        layout.addWidget(preview_container)
 
         # 设置拉伸因子，优化高度分配
         layout.setStretch(0, 1)  # formula_group - 公式编辑区，保持固定
@@ -2963,148 +3183,516 @@ class FormulaEditDialog(QDialog):
             self.formula_input.setText(self.current_formula)
 
     def load_sheet_data(self):
-        """加载工作表数据 - 使用计算引擎获取工作表名称"""
-        # 使用计算引擎获取工作表名称
-        sheet_names = self.calculation_engine.get_sheet_names()
-        self.sheet_combo.addItems(sheet_names)
-
-        if sheet_names:
-            self.on_sheet_changed(sheet_names[0])
-
-    def on_sheet_changed(self, sheet_name):
-        """工作表切换事件 - 使用动态列显示原sheet的数据结构"""
-        if not sheet_name:
+        """加载工作表数据 - 复刻来源项库视图"""
+        if not self.workbook_manager:
             return
 
-        # 获取该sheet的列元数据
-        column_metadata = self.workbook_manager.source_sheet_columns.get(sheet_name, [])
-
-        # 如果没有列元数据，使用默认的4列显示
-        if not column_metadata:
-            # 创建默认的数据模型
-            model = QStandardItemModel()
-            model.setHorizontalHeaderLabels(["项目名称", "单元格", "数值", "引用格式"])
-
-            # 使用计算引擎获取该工作表的引用数据
-            references = self.calculation_engine.get_available_references(sheet_name)
-
-            for ref_info in references:
-                name_item = QStandardItem(ref_info["name"])
-                cell_item = QStandardItem(ref_info["cell_address"])
-                value_item = QStandardItem(
-                    str(ref_info["value"]) if ref_info["value"] is not None else ""
-                )
-                ref_item = QStandardItem(ref_info["reference_string"])
-
-                model.appendRow([name_item, cell_item, value_item, ref_item])
-        else:
-            # 使用动态列显示原sheet的完整数据结构
-            # 构建列标题：项目名称 + 数据列
-            headers = ["项目名称"]  # 第一列固定为项目名称
-            data_column_keys = []  # 记录数据列的key
-
-            for col_meta in column_metadata:
-                if col_meta.get("is_data_column", False):
-                    display_name = col_meta.get("display_name", f"列{col_meta.get('column_letter', '')}")
-                    headers.append(display_name)
-                    data_column_keys.append(col_meta.get("key"))
-
-            # 不再添加"引用格式"列，因为现在是动态构建三段式引用
-
-            # 创建模型
-            model = QStandardItemModel()
-            model.setHorizontalHeaderLabels(headers)
-
-            # 获取该sheet的所有源数据项
-            sheet_sources = []
-            for source_id, source_item in self.workbook_manager.source_items.items():
-                if source_item.sheet_name == sheet_name:
-                    sheet_sources.append(source_item)
-
-            # 按行号排序，保持原始顺序
-            sheet_sources.sort(key=lambda x: x.row)
-
-            # 填充数据
-            for source_item in sheet_sources:
-                row_items = []
-
-                # 第一列：项目名称（保留层级缩进）
-                name_with_indent = source_item.full_name_with_indent or source_item.name
-                name_item = QStandardItem(name_with_indent)
-                # ⭐ 关键：将完整的source_item对象存储到UserRole，避免后续通过文本解析匹配
-                name_item.setData(source_item, Qt.UserRole)
-                row_items.append(name_item)
-
-                # 数据列：从source_item.data_columns获取
-                for col_key in data_column_keys:
-                    value = source_item.data_columns.get(col_key, "")
-                    if value is None:
-                        value = ""
-                    value_item = QStandardItem(str(value))
-                    row_items.append(value_item)
-
-                # 不再添加引用格式列
-
-                model.appendRow(row_items)
-
-        self.data_table.setModel(model)
-
-        # 调整列宽
-        header = self.data_table.horizontalHeader()
-        ensure_interactive_header(header, stretch_last=False)
-        for column in range(model.columnCount()):
-            header.setSectionResizeMode(
-                column,
-                (
-                    QHeaderView.ResizeToContents
-                    if column != 0
-                    else QHeaderView.ResizeToContents
-                ),
-            )
-            self.data_table.resizeColumnToContents(column)
-            header.setSectionResizeMode(column, QHeaderView.Interactive)
-
-        # 应用智能填充，确保数据选择表格占满容器宽度
-        # 为所有列设置合理的最小和最大宽度
-        min_widths = {}
-        max_widths = {}
-
-        if not column_metadata:
-            # 默认4列的宽度设置
-            for column in range(model.columnCount()):
-                if column == 0:  # 项目名称列
-                    min_widths[column] = 150
-                    max_widths[column] = 400
-                elif column == 1:  # 单元格列
-                    min_widths[column] = 80
-                    max_widths[column] = 120
-                elif column == 2:  # 数值列
-                    min_widths[column] = 100
-                    max_widths[column] = 200
-                else:  # 引用格式列
-                    min_widths[column] = 150
-                    max_widths[column] = 300
-        else:
-            # 动态列的宽度设置
-            for column in range(model.columnCount()):
-                if column == 0:  # 项目名称列
-                    min_widths[column] = 200  # 需要更宽以显示缩进
-                    max_widths[column] = 500
-                elif column == model.columnCount() - 1:  # 引用格式列
-                    min_widths[column] = 150
-                    max_widths[column] = 300
-                else:  # 数据列
-                    min_widths[column] = 100
-                    max_widths[column] = 200
-
-        # 应用智能填充算法
-        distribute_columns_evenly(
-            self.data_table,
-            exclude_columns=[],  # 不排除任何列
-            min_widths=min_widths,
-            max_widths=max_widths
+        column_metadata = (
+            getattr(self.workbook_manager, "source_sheet_columns", {}) or {}
         )
-        # 行高已设置为自适应，无需手动调整
+        if column_metadata:
+            self.data_tree.set_column_metadata(column_metadata)
+
+        source_items = getattr(self.workbook_manager, "source_items", {}) or {}
+        self.data_tree.populate_source_items(source_items)
+
+        preferred_sheet = getattr(self.target_item, "sheet_name", None)
+        combo = getattr(self.data_tree, "sheet_combo", None)
+        if (
+            preferred_sheet
+            and combo
+            and preferred_sheet in getattr(self.data_tree, "available_sheets", [])
+        ):
+            combo.blockSignals(True)
+            combo.setCurrentText(preferred_sheet)
+            combo.blockSignals(False)
+            self.data_tree.on_sheet_changed(preferred_sheet)
+        else:
+            self.data_tree.refresh_display()
+
+        self.active_sheet_name = (
+            getattr(self.data_tree, "current_sheet", None) or preferred_sheet
+        )
+
+    def on_tree_sheet_changed(self, sheet_name: str):
+        """记录当前选中的来源项工作表"""
+        if sheet_name:
+            self.active_sheet_name = sheet_name
+
+    def on_tree_reference_requested(
+        self,
+        sheet_name: str,
+        item_name: str,
+        column_name: str,
+        full_reference: str,
+    ):
+        """处理来源项树发出的三段式引用请求"""
+        self._insert_reference_to_formula(full_reference)
+
+    def _resolve_source_item(self, index: QModelIndex) -> Optional[SourceItem]:
+        if not index.isValid():
+            return None
+
+        model = index.model()
+        data = model.data(index, Qt.UserRole)
+        if isinstance(data, SourceItem):
+            return data
+
+        if hasattr(model, "itemFromIndex"):
+            item = model.itemFromIndex(index)
+            if item:
+                data = item.data(Qt.UserRole)
+                if isinstance(data, SourceItem):
+                    return data
+
+        parent_index = index.parent()
+        row = index.row()
+        column_count = model.columnCount(parent_index)
+        for column in range(column_count):
+            sibling = model.index(row, column, parent_index)
+            data = model.data(sibling, Qt.UserRole)
+            if isinstance(data, SourceItem):
+                return data
+
+        display_text = model.data(index, Qt.DisplayRole)
+        if display_text and getattr(self.data_tree, "all_source_items", None):
+            clean_text = str(display_text).strip()
+            for item in self.data_tree.all_source_items.values():
+                name = getattr(item, "name", "")
+                full_name = getattr(item, "full_name_with_indent", "")
+                if clean_text == name or clean_text == full_name.strip():
+                    return item
+
+        return None
+
+    def _collect_available_columns(
+        self,
+        source_item: SourceItem,
+        sheet_name: Optional[str] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, str], Dict[str, str]]:
+        sheet = (
+            sheet_name
+            or getattr(source_item, "sheet_name", None)
+            or self.active_sheet_name
+            or ""
+        )
+
+        metadata = (
+            getattr(self.data_tree, "sheet_column_metadata", {}).get(sheet, []) or []
+        )
+
+        alias_to_key: Dict[str, str] = {}
+        display_lookup: Dict[str, str] = {}
+
+        def register_alias(alias: Optional[str], canonical: str):
+            if not alias:
+                return
+            alias_str = str(alias)
+            alias_to_key[alias_str] = canonical
+            normalized = SearchableSourceTree._normalize_header_name(alias_str)
+            alias_to_key[normalized] = canonical
+
+        for entry in metadata:
+            raw_key = entry.get("key")
+            display = entry.get("display_name")
+            canonical = str(raw_key or display or "").strip()
+            if not canonical:
+                continue
+            display_lookup[canonical] = str(display or canonical)
+            register_alias(raw_key, canonical)
+            register_alias(display, canonical)
+
+        available: Dict[str, Any] = {}
+
+        def register_value(raw_name: Optional[str], value: Any):
+            if raw_name is None:
+                return
+            name_str = str(raw_name)
+            canonical = alias_to_key.get(name_str)
+            if not canonical:
+                canonical = alias_to_key.get(
+                    SearchableSourceTree._normalize_header_name(name_str)
+                )
+            if not canonical:
+                canonical = name_str
+                register_alias(name_str, canonical)
+            if canonical not in display_lookup:
+                display_lookup[canonical] = name_str
+            available[canonical] = value
+
+        if (
+            hasattr(source_item, "values")
+            and isinstance(source_item.values, dict)
+            and source_item.values
+        ):
+            for key, value in source_item.values.items():
+                register_value(key, value)
+
+        if (
+            hasattr(source_item, "data_columns")
+            and isinstance(source_item.data_columns, dict)
+            and source_item.data_columns
+        ):
+            for key, value in source_item.data_columns.items():
+                register_value(key, value)
+
+        return available, alias_to_key, display_lookup
+
+    def _is_readonly_header(self, header: Optional[str]) -> bool:
+        if not header:
+            return False
+        header_str = str(header)
+        normalized = SearchableSourceTree._normalize_header_name(header_str)
+        return (
+            header_str in self.READ_ONLY_HEADERS
+            or normalized in self._readonly_headers_normalized
+        )
+
+    def _show_column_selection_menu(
+        self,
+        source_item: SourceItem,
+        sheet_name: str,
+        available_columns: Dict[str, Any],
+        display_lookup: Dict[str, str],
+        global_pos: QPoint,
+    ) -> Optional[str]:
+        from PySide6.QtWidgets import QMenu
+
+        menu = QMenu(self)
+        for column_name, column_value in available_columns.items():
+            display_text = display_lookup.get(column_name, str(column_name))
+            if column_value not in (None, ""):
+                if isinstance(column_value, (int, float)):
+                    display_text += (
+                        f"  ({column_value:,.2f})"
+                        if isinstance(column_value, float)
+                        else f"  ({column_value:,})"
+                    )
+                else:
+                    value_preview = str(column_value)
+                    if len(value_preview) > 20:
+                        value_preview = value_preview[:20] + "…"
+                    display_text += f"  ({value_preview})"
+            action = menu.addAction(display_text)
+            action.setData(str(column_name))
+
+        chosen_action = menu.exec_(global_pos)
+        if not chosen_action:
+            return None
+
+        return chosen_action.data()
+
+    def on_tree_double_clicked(self, index: QModelIndex):
+        """双击单元格时直接应用可编辑列，遇到只读列弹出选择菜单"""
+        if not index.isValid():
+            return
+
+        source_item = self._resolve_source_item(index)
+        if not source_item:
+            return
+
+        sheet_name = (
+            getattr(source_item, "sheet_name", None) or self.active_sheet_name or ""
+        )
+        available_columns, alias_lookup, display_lookup = (
+            self._collect_available_columns(source_item, sheet_name)
+        )
+
+        if not available_columns:
+            reference = f"[{sheet_name}]![{source_item.name}]"
+            self._insert_reference_to_formula(reference)
+            return
+
+        header_name = index.model().headerData(index.column(), Qt.Horizontal)
+        is_readonly_header = self._is_readonly_header(header_name)
+        column_key = None
+        if not is_readonly_header:
+            column_key = self._resolve_column_key(
+                header_name, available_columns, alias_lookup, sheet_name
+            )
+
+        if (
+            column_key
+            and not is_readonly_header
+            and self._is_data_column(column_key, sheet_name)
+        ):
+            self.data_tree._insert_three_segment_reference(
+                sheet_name,
+                source_item.name,
+                column_key,
+            )
+            return
+
+        global_pos = self.data_tree.viewport().mapToGlobal(
+            self.data_tree.visualRect(index).center()
+        )
+        chosen_column = self._show_column_selection_menu(
+            source_item,
+            sheet_name,
+            available_columns,
+            display_lookup,
+            global_pos,
+        )
+        if chosen_column:
+            self.data_tree._insert_three_segment_reference(
+                sheet_name,
+                source_item.name,
+                chosen_column,
+            )
+
+    def add_selected_item(self):
+        """添加选中的数据项到公式"""
+        selection_model = self.data_tree.selectionModel()
+        if not selection_model:
+            return
+
+        selected_indexes = selection_model.selectedRows()
+        if not selected_indexes:
+            return
+
+        for index in selected_indexes:
+            source_item = self._resolve_source_item(index)
+            if not source_item:
+                continue
+
+            sheet_name = (
+                getattr(source_item, "sheet_name", None) or self.active_sheet_name or ""
+            )
+            available_columns, alias_lookup, display_lookup = (
+                self._collect_available_columns(source_item, sheet_name)
+            )
+
+            if not available_columns:
+                reference = f"[{sheet_name}]![{source_item.name}]"
+                self._insert_reference_to_formula(reference)
+                continue
+
+            if len(available_columns) == 1:
+                column_name = next(iter(available_columns.keys()))
+                self.data_tree._insert_three_segment_reference(
+                    sheet_name,
+                    source_item.name,
+                    column_name,
+                )
+                continue
+
+            global_pos = self.data_tree.viewport().mapToGlobal(
+                self.data_tree.visualRect(index).center()
+            )
+            chosen_column = self._show_column_selection_menu(
+                source_item,
+                sheet_name,
+                available_columns,
+                display_lookup,
+                global_pos,
+            )
+            if chosen_column:
+                self.data_tree._insert_three_segment_reference(
+                    sheet_name,
+                    source_item.name,
+                    chosen_column,
+                )
+
+    def add_batch_selected_items(self):
+        selection_model = self.data_tree.selectionModel()
+        if not selection_model:
+            return
+
+        selected_indexes = selection_model.selectedRows()
+        if len(selected_indexes) < 2:
+            self.add_selected_item()
+            return
+
+        current_index = selection_model.currentIndex()
+        source_item = self._resolve_source_item(current_index)
+        if not source_item and selected_indexes:
+            source_item = self._resolve_source_item(selected_indexes[0])
+
+        if not source_item:
+            return
+
+        sheet_name = (
+            getattr(source_item, "sheet_name", None) or self.active_sheet_name or ""
+        )
+        available_columns, alias_lookup, display_lookup = (
+            self._collect_available_columns(source_item, sheet_name)
+        )
+
+        if not available_columns:
+            return
+
+        visual_rect = (
+            self.data_tree.visualRect(current_index)
+            if current_index.isValid()
+            else self.data_tree.viewport().rect()
+        )
+        global_pos = self.data_tree.viewport().mapToGlobal(visual_rect.center())
+
+        chosen_column = self._show_column_selection_menu(
+            source_item,
+            sheet_name,
+            available_columns,
+            display_lookup,
+            global_pos,
+        )
+
+        if not chosen_column:
+            return
+
+        references: List[str] = []
+        for index in selected_indexes:
+            item = self._resolve_source_item(index)
+            if not item:
+                continue
+            references.append(
+                build_formula_reference_three_segment(
+                    getattr(item, "sheet_name", sheet_name),
+                    item.name,
+                    chosen_column,
+                )
+            )
+
+        if not references:
+            return
+
+        batch_formula = " + ".join(references)
+        self._insert_reference_to_formula(batch_formula)
+
+    def on_tree_context_menu(self, pos: QPoint):
+        """右键菜单处理 - 选择具体列插入引用"""
+        from PySide6.QtWidgets import QMessageBox
+
+        index = self.data_tree.indexAt(pos)
+        if not index.isValid():
+            return
+
+        source_item = self._resolve_source_item(index)
+        if not source_item:
+            QMessageBox.warning(self, "错误", "无法获取来源项数据")
+            return
+
+        sheet_name = (
+            getattr(source_item, "sheet_name", None) or self.active_sheet_name or ""
+        )
+        available_columns, _, display_lookup = self._collect_available_columns(
+            source_item, sheet_name
+        )
+        if not available_columns:
+            reference = f"[{sheet_name}]![{source_item.name}]"
+            self._insert_reference_to_formula(reference)
+            return
+
+        selection_model = self.data_tree.selectionModel()
+        selected_indexes = selection_model.selectedRows() if selection_model else []
+        if not selected_indexes:
+            selected_indexes = [index]
+
+        global_pos = self.data_tree.viewport().mapToGlobal(pos)
+        chosen_column = self._show_column_selection_menu(
+            source_item,
+            sheet_name,
+            available_columns,
+            display_lookup,
+            global_pos,
+        )
+        if not chosen_column:
+            return
+
+        references: List[str] = []
+        for sel_index in selected_indexes:
+            item = self._resolve_source_item(sel_index)
+            if not item:
+                continue
+            references.append(
+                build_formula_reference_three_segment(
+                    getattr(item, "sheet_name", sheet_name),
+                    item.name,
+                    chosen_column,
+                )
+            )
+
+        if not references:
+            return
+
+        batch_formula = " + ".join(references)
+        self._insert_reference_to_formula(batch_formula)
+
+    def _is_data_column(self, column_key: str, sheet_name: str) -> bool:
+        if self._is_readonly_header(column_key):
+            return False
+
+        metadata = (
+            getattr(self.data_tree, "sheet_column_metadata", {}).get(sheet_name, [])
+            or []
+        )
+        normalized_key = SearchableSourceTree._normalize_header_name(column_key)
+        for entry in metadata:
+            key = str(entry.get("key") or entry.get("display_name") or "")
+            if not key:
+                continue
+            if (
+                key == column_key
+                or SearchableSourceTree._normalize_header_name(key) == normalized_key
+            ):
+                return bool(entry.get("is_data_column", False))
+        return True
+
+    def _resolve_column_key(
+        self,
+        header_name: Optional[str],
+        available_columns: Dict[str, Any],
+        alias_lookup: Dict[str, str],
+        sheet_name: str,
+    ) -> Optional[str]:
+        if not header_name:
+            return None
+
+        header_str = str(header_name)
+        if header_str in available_columns:
+            return header_str
+
+        mapped = alias_lookup.get(header_str)
+        if not mapped:
+            mapped = alias_lookup.get(
+                SearchableSourceTree._normalize_header_name(header_str)
+            )
+        if mapped and mapped in available_columns:
+            return mapped
+
+        normalized = SearchableSourceTree._normalize_header_name(header_str)
+        for key in available_columns.keys():
+            if SearchableSourceTree._normalize_header_name(str(key)) == normalized:
+                return key
+
+        metadata = (
+            getattr(self.data_tree, "sheet_column_metadata", {}).get(sheet_name, [])
+            or []
+        )
+        for entry in metadata:
+            display = entry.get("display_name")
+            key = entry.get("key") or display
+            if not key:
+                continue
+            display_norm = SearchableSourceTree._normalize_header_name(
+                str(display or "")
+            )
+            key_norm = SearchableSourceTree._normalize_header_name(str(key))
+            if (
+                str(display) == header_str
+                or str(key) == header_str
+                or display_norm == normalized
+                or key_norm == normalized
+            ):
+                if str(key) in available_columns:
+                    return str(key)
+                if str(display) in available_columns:
+                    return str(display)
+
+        for key in available_columns.keys():
+            if str(key).strip().lower() == header_str.strip().lower():
+                return key
+
+        return None
 
     def insert_operator(self, operator):
         """插入运算符"""
@@ -3120,131 +3708,6 @@ class FormulaEditDialog(QDialog):
             self.formula_input.setText(new_text)
             self.formula_input.setCursorPosition(cursor_pos + len(operator))
 
-    def add_selected_item(self):
-        """
-        添加选中的数据项到公式 - 支持三段式引用
-
-        策略：
-        1. 如果表格有多个数据列，需要用户选择要引用哪一列
-        2. 如果只有一个数据列，直接使用该列
-        3. 构建三段式引用：[工作表名]![项目名]![列名]
-        """
-        from PySide6.QtWidgets import QMenu, QMessageBox
-
-        selected_indexes = self.data_table.selectionModel().selectedRows()
-        if not selected_indexes:
-            return
-
-        model = self.data_table.model()
-
-        for index in selected_indexes:
-            row = index.row()
-
-            # ⭐ 直接从UserRole获取完整的source_item对象，避免文本解析匹配问题
-            source_item = model.item(row, 0).data(Qt.UserRole)
-
-            if not source_item:
-                # 备选方案：尝试从文本解析（兼容旧数据）
-                name_with_indent = model.item(row, 0).text()
-                item_name = name_with_indent.strip()
-                sheet_name = self.sheet_combo.currentText()
-
-                for src in self.workbook_manager.source_items.values():
-                    if src.sheet_name == sheet_name and src.name == item_name:
-                        source_item = src
-                        break
-
-            if not source_item:
-                QMessageBox.warning(self, "错误", f"无法获取来源项数据")
-                continue
-
-            # 获取工作表名（可能与source_item.sheet_name一致，但以界面选择为准）
-            sheet_name = self.sheet_combo.currentText()
-
-            # ⭐ 优先从source_item获取可用的数据列
-            available_columns = {}
-
-            # 方式1: 从values字典获取（三段式引用的标准数据源）
-            if hasattr(source_item, 'values') and isinstance(source_item.values, dict):
-                available_columns = source_item.values
-
-            # 方式2: 从data_columns获取（备选）
-            elif hasattr(source_item, 'data_columns') and isinstance(source_item.data_columns, dict):
-                available_columns = source_item.data_columns
-
-            # 方式3: 从表头推断数据列（兼容模式）
-            else:
-                column_count = model.columnCount()
-                headers = []
-                for col in range(column_count):
-                    headers.append(model.headerData(col, Qt.Horizontal))
-
-                # 识别数据列（排除"项目名称"和"引用格式"）
-                for col_idx, header_text in enumerate(headers):
-                    if header_text not in ["项目名称", "引用格式", "单元格", "科目代码", "层级"]:
-                        # 这是数据列
-                        value_text = model.item(row, col_idx).text() if model.item(row, col_idx) else ""
-                        available_columns[header_text] = value_text
-
-            # 根据数据列数量决定策略
-            if not available_columns:
-                # 没有数据列，使用旧格式（兼容）
-                ref_string = f"[{sheet_name}]![{source_item.name}]"
-                self._insert_reference_to_formula(ref_string)
-
-            elif len(available_columns) == 1:
-                # 只有一个数据列，直接使用
-                column_name = list(available_columns.keys())[0]
-                ref_string = build_formula_reference_three_segment(
-                    sheet_name,
-                    source_item.name,
-                    column_name
-                )
-                self._insert_reference_to_formula(ref_string)
-
-            else:
-                # 多个数据列，弹出选择菜单
-                menu = QMenu(self)
-                menu.setStyleSheet("""
-                    QMenu {
-                        background-color: white;
-                        border: 1px solid #ccc;
-                        padding: 5px;
-                    }
-                    QMenu::item {
-                        padding: 8px 25px;
-                        font-size: 11pt;
-                    }
-                    QMenu::item:selected {
-                        background-color: #4CAF50;
-                        color: white;
-                    }
-                """)
-
-                # 添加列选项（从available_columns字典）
-                for col_name, col_value in available_columns.items():
-                    # 格式化显示文本
-                    display_text = f"{col_name}"  # 移除emoji避免编码问题
-                    if col_value is not None and str(col_value).strip():
-                        display_text += f"  ({col_value})"
-
-                    action = menu.addAction(display_text)
-                    action.triggered.connect(
-                        lambda checked=False, cn=col_name: self._insert_three_segment_reference(
-                            sheet_name,
-                            source_item.name,
-                            cn
-                        )
-                    )
-
-                # 在鼠标位置显示菜单
-                menu.exec_(self.data_table.mapToGlobal(self.data_table.visualRect(index).center()))
-
-    def _insert_three_segment_reference(self, sheet_name: str, item_name: str, column_name: str):
-        """插入三段式引用到公式输入框"""
-        ref_string = build_formula_reference_three_segment(sheet_name, item_name, column_name)
-        self._insert_reference_to_formula(ref_string)
-
     def _insert_reference_to_formula(self, ref_string: str):
         """插入引用到公式输入框"""
         current_text = self.formula_input.text()
@@ -3252,10 +3715,6 @@ class FormulaEditDialog(QDialog):
             current_text += " "
 
         self.formula_input.setText(current_text + ref_string)
-
-    def on_data_double_clicked(self, index):
-        """双击数据项"""
-        self.add_selected_item()
 
     def on_formula_changed(self, text):
         """公式内容变化"""
@@ -3348,7 +3807,7 @@ class FormulaEditDialog(QDialog):
                         "sheet_name": "",
                         "item_name": None,
                         "column_name": None,  # 三段式使用column_name
-                        "column_key": None,   # 保留兼容
+                        "column_key": None,  # 保留兼容
                         "cell_address": "",
                         "full_reference": str(ref),
                     }

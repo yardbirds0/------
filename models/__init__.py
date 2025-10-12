@@ -13,7 +13,13 @@ from .data_models import (
     SourceItem,
     MappingFormula,
     WorksheetInfo,
-    WorkbookManager
+    WorkbookManager,
+)
+from .analysis_context import (
+    AnalysisTargetColumn,
+    AnalysisSourceColumn,
+    AnalysisSourceSheet,
+    AnalysisPanelState,
 )
 
 __all__ = [
@@ -23,5 +29,9 @@ __all__ = [
     'SourceItem',
     'MappingFormula',
     'WorksheetInfo',
-    'WorkbookManager'
+    'WorkbookManager',
+    'AnalysisTargetColumn',
+    'AnalysisSourceColumn',
+    'AnalysisSourceSheet',
+    'AnalysisPanelState',
 ]

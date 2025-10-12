@@ -7,6 +7,8 @@
 
 import os
 import json
+import re
+from pathlib import Path
 import openpyxl
 from typing import List, Dict, Tuple, Optional, Any
 from datetime import datetime
@@ -16,11 +18,39 @@ from tkinter import filedialog, messagebox, ttk
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+
+def get_application_directory() -> Path:
+    """
+    获取应用程序目录
+    - 打包成exe后：返回exe所在目录
+    - 开发环境：返回项目根目录
+
+    Returns:
+        Path: 应用程序目录
+    """
+    if getattr(sys, 'frozen', False):
+        # 打包成exe后，sys.executable是exe文件路径
+        return Path(sys.executable).parent
+    else:
+        # 开发环境，使用__file__的父目录的父目录（项目根目录）
+        return Path(__file__).resolve().parents[1]
+
 from models.data_models import (
     WorkbookManager, WorksheetInfo, SheetType,
     TargetItem, SourceItem, MappingFormula, FormulaStatus
 )
 
+SENSITIVE_HEADER_KEYS = {
+    "authorization",
+    "api-key",
+    "x-api-key",
+    "api_key",
+    "bearer",
+    "token",
+    "secret",
+}
+
+_FILENAME_SANITIZE_PATTERN = re.compile(r"[^0-9A-Za-z\u4e00-\u9fff._-]+")
 
 class FileManager:
     """文件管理器类"""
@@ -31,15 +61,257 @@ class FileManager:
         Args:
             classification_callback: 工作表分类确认回调函数 (已弃用，现在使用拖拽界面)
         """
+        # 使用应用程序目录（打包后是exe所在目录，开发时是项目根目录）
+        self.base_dir = get_application_directory()
+        self.formula_dir = self.base_dir / "Fomular"
+        self.formula_backup_dir = self.formula_dir / "Backup"  # 改为大写Backup
+        self.request_history_dir = self.base_dir / "requesthistory"
+
         self.workbook_manager: Optional[WorkbookManager] = None
         self.current_workbook = None
         self.config_file = "workbook_config.json"
         # 不再使用回调，改为直接自动分类
         # self.classification_callback = classification_callback
 
+    @staticmethod
+    def _sanitize_filename(name: str) -> str:
+        """将名称转换为安全的文件名。"""
+        if not name:
+            return "sheet"
+        sanitized = _FILENAME_SANITIZE_PATTERN.sub("_", str(name))
+        sanitized = sanitized.strip("._-")
+        return sanitized or "sheet"
+
+    def sanitize_filename(self, name: str) -> str:
+        """对外暴露的文件名规范化方法。"""
+        return self._sanitize_filename(name)
+
+    @staticmethod
+    def _mask_sensitive_value(value: Any) -> str:
+        """对敏感信息进行掩码处理。"""
+        text = str(value or "")
+        if not text:
+            return ""
+        if len(text) <= 4:
+            return "*" * len(text)
+        return f"{text[:4]}***{text[-4:]}"
+
+    def _mask_headers(self, headers: Dict[str, Any]) -> Dict[str, Any]:
+        """返回掩码后的请求头。"""
+        masked: Dict[str, Any] = {}
+        for key, value in (headers or {}).items():
+            try:
+                if isinstance(value, (dict, list)):
+                    masked_value = value
+                else:
+                    text = str(value)
+                    if key.lower() in SENSITIVE_HEADER_KEYS:
+                        masked_value = self._mask_sensitive_value(text)
+                    else:
+                        masked_value = text
+            except Exception:
+                masked_value = "***"
+            masked[key] = masked_value
+        return masked
+
+    @staticmethod
+    def _ensure_directory(path: Path) -> None:
+        path.mkdir(parents=True, exist_ok=True)
+
+    def save_analysis_request_history(
+        self,
+        *,
+        sheet_name: str,
+        payload: Dict[str, Any],
+        prompt_text: str,
+        headers: Dict[str, Any],
+        endpoint: Optional[str] = None,
+        model: Optional[str] = None,
+        warnings: Optional[List[str]] = None,
+    ) -> Optional[Path]:
+        """将分析预发送请求记录到 requesthistory 目录。"""
+        try:
+            self._ensure_directory(self.request_history_dir)
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            filename = f"{self._sanitize_filename(sheet_name)}-request-{timestamp}.json"
+            file_path = self.request_history_dir / filename
+
+            record = {
+                "sheet_name": sheet_name,
+                "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "prompt_preview": prompt_text,
+                "payload": payload,
+                "headers": self._mask_headers(headers),
+                "endpoint": endpoint,
+                "model": model,
+                "warnings": list(warnings or []),
+            }
+
+            tmp_path = file_path.with_name(file_path.name + ".tmp")
+            tmp_path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp_path.replace(file_path)
+            return file_path
+        except Exception as exc:  # pragma: no cover - 防御性
+            print(f"保存分析请求记录失败: {exc}")
+            return None
+
+    def export_formula_snapshot(
+        self,
+        *,
+        sheet_name: str,
+        entries: List[Dict[str, Any]],
+        destination: Optional[Path] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Path]:
+        """将映射公式导出为 JSON 文件，并在默认目录下进行备份。"""
+        if not entries:
+            return None
+
+        try:
+            if destination is not None:
+                destination = Path(destination)
+                self._ensure_directory(destination.parent)
+            else:
+                self._ensure_directory(self.formula_dir)
+                destination = self.formula_dir / f"{self._sanitize_filename(sheet_name)}.json"
+                if destination.exists():
+                    self._ensure_directory(self.formula_backup_dir)
+                    backup_name = (
+                        f"{self._sanitize_filename(sheet_name)}-"
+                        f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-backup.json"
+                    )
+                    backup_path = self.formula_backup_dir / backup_name
+                    try:
+                        destination.replace(backup_path)
+                    except Exception:
+                        # 如果移动失败，尝试复制内容后删除
+                        backup_path.write_text(
+                            destination.read_text(encoding="utf-8"),
+                            encoding="utf-8",
+                        )
+                        destination.unlink(missing_ok=True)
+
+            snapshot = {
+                "version": 1,
+                "sheet_name": sheet_name,
+                "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "entries": entries,
+                "metadata": metadata or {},
+            }
+
+            tmp_path = destination.with_name(destination.name + ".tmp")
+            tmp_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp_path.replace(destination)
+            return destination
+        except Exception as exc:  # pragma: no cover - 防御性
+            print(f"保存公式映射失败: {exc}")
+            return None
+
+    def import_formula_snapshot(
+        self,
+        *,
+        sheet_name: str,
+        file_path: Path,
+    ) -> Dict[str, Any]:
+        """从 JSON 文件加载公式映射，并进行基础校验。"""
+        path = Path(file_path)
+        if not path.exists():
+            raise FileNotFoundError(str(path))
+
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("导入的 JSON 结构无效。")
+
+        snapshot_sheet = data.get("sheet_name")
+        if snapshot_sheet and sheet_name and snapshot_sheet != sheet_name:
+            raise ValueError(
+                f"JSON 文件属于工作表 '{snapshot_sheet}'，与当前 '{sheet_name}' 不匹配。"
+            )
+
+        entries = data.get("entries")
+        if not isinstance(entries, list) or not entries:
+            mappings = data.get("mappings")
+            if isinstance(mappings, dict) and mappings:
+                converted_entries: List[Dict[str, Any]] = []
+                for target_name, column_map in mappings.items():
+                    if not isinstance(column_map, dict):
+                        continue
+                    for column_name, mapping_info in column_map.items():
+                        formula: Optional[str] = None
+                        confidence = None
+                        reasoning = ""
+
+                        if isinstance(mapping_info, dict):
+                            formula = mapping_info.get("formula")
+                            confidence = mapping_info.get("confidence")
+                            reasoning = mapping_info.get("reasoning") or ""
+                        elif isinstance(mapping_info, str):
+                            formula = mapping_info
+
+                        if not formula:
+                            continue
+
+                        converted_entries.append(
+                            {
+                                "target_name": target_name,
+                                "column_key": column_name,
+                                "column_display": column_name,
+                                "formula": formula,
+                                "confidence": confidence,
+                                "reasoning": reasoning,
+                            }
+                        )
+
+                if converted_entries:
+                    entries = converted_entries
+
+        if not isinstance(entries, list) or not entries:
+            raise ValueError("导入的 JSON 未包含映射条目。")
+
+        sanitized_entries: List[Dict[str, Any]] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            target_name = entry.get("target_name") or entry.get("target")
+            column_key = entry.get("column_key") or entry.get("key")
+            formula = entry.get("formula")
+            if not target_name or not column_key or not formula:
+                continue
+            column_display = (
+                entry.get("column_display")
+                or entry.get("column_name")
+                or column_key
+            )
+            try:
+                confidence = entry.get("confidence")
+                confidence_value = float(confidence) if confidence is not None else None
+            except (TypeError, ValueError):
+                confidence_value = None
+
+            sanitized_entries.append(
+                {
+                    "target_name": str(target_name),
+                    "column_key": str(column_key),
+                    "column_display": str(column_display),
+                    "formula": str(formula),
+                    "confidence": confidence_value,
+                    "reasoning": entry.get("reasoning") or "",
+                }
+            )
+
+        if not sanitized_entries:
+            raise ValueError("导入的 JSON 未包含有效的映射条目。")
+
+        return {
+            "sheet_name": snapshot_sheet or sheet_name,
+            "entries": sanitized_entries,
+            "metadata": data.get("metadata", {}),
+            "generated_at": data.get("generated_at"),
+        }
+
     def load_excel_files(self, file_paths: List[str]) -> Tuple[bool, str]:
         """
-        加载Excel文件
+        加载Excel文件（支持单文件和多文件模式）
 
         Args:
             file_paths: Excel文件路径列表
@@ -51,36 +323,138 @@ class FileManager:
             if not file_paths:
                 return False, "未选择任何文件"
 
-            # 目前只支持单个文件，后续可扩展
-            file_path = file_paths[0]
+            # 验证所有文件
+            for file_path in file_paths:
+                if not os.path.exists(file_path):
+                    return False, f"文件不存在: {file_path}"
+                if not file_path.lower().endswith(('.xlsx', '.xls')):
+                    return False, f"不支持的文件格式: {file_path}"
 
-            if not os.path.exists(file_path):
-                return False, f"文件不存在: {file_path}"
+            # 判断单文件还是多文件模式
+            is_multi_file = len(file_paths) > 1
 
-            if not file_path.lower().endswith(('.xlsx', '.xls')):
-                return False, f"不支持的文件格式: {file_path}"
+            if is_multi_file:
+                # 多文件模式
+                print(f"正在加载 {len(file_paths)} 个Excel文件...")
+                return self._load_multiple_files(file_paths)
+            else:
+                # 单文件模式（原有逻辑）
+                file_path = file_paths[0]
+                print(f"正在加载Excel文件: {file_path}")
 
-            print(f"正在加载Excel文件: {file_path}")
+                # 加载工作簿
+                self.current_workbook = openpyxl.load_workbook(file_path, data_only=True)
 
-            # 加载工作簿
-            self.current_workbook = openpyxl.load_workbook(file_path, data_only=True)
+                # 创建工作簿管理器
+                self.workbook_manager = WorkbookManager(file_path=file_path)
+                self.workbook_manager.is_multi_file_mode = False
 
-            # 创建工作簿管理器
-            self.workbook_manager = WorkbookManager(file_path=file_path)
+                # 分析所有工作表
+                self._analyze_all_sheets()
 
-            # 分析所有工作表
-            self._analyze_all_sheets()
+                # 自动分类工作表
+                self._auto_classify_sheets()
 
-            # 自动分类工作表
-            self._auto_classify_sheets()
-
-            print(f"成功加载工作簿，包含 {len(self.current_workbook.sheetnames)} 个工作表")
-            return True, "文件加载成功"
+                print(f"成功加载工作簿，包含 {len(self.current_workbook.sheetnames)} 个工作表")
+                return True, "文件加载成功"
 
         except Exception as e:
             error_msg = f"加载文件失败: {str(e)}"
             print(error_msg)
             return False, error_msg
+
+    def _load_multiple_files(self, file_paths: List[str]) -> Tuple[bool, str]:
+        """
+        加载多个Excel文件并合并
+
+        Args:
+            file_paths: 文件路径列表
+
+        Returns:
+            Tuple[bool, str]: (是否成功, 消息)
+        """
+        try:
+            # 创建工作簿管理器（多文件模式）
+            self.workbook_manager = WorkbookManager(
+                file_path=f"merged_{len(file_paths)}_files",  # 虚拟路径
+                is_multi_file_mode=True,
+                source_files=file_paths.copy()
+            )
+
+            all_sheets = []
+            sheet_file_map = {}
+
+            # 遍历所有文件，收集所有sheet
+            for file_idx, file_path in enumerate(file_paths, 1):
+                print(f"  [{file_idx}/{len(file_paths)}] 加载: {Path(file_path).name}")
+
+                wb = openpyxl.load_workbook(file_path, data_only=True)
+
+                for sheet_name in wb.sheetnames:
+                    # 处理sheet名称冲突
+                    original_name = sheet_name
+                    unique_name = sheet_name
+                    suffix = 1
+
+                    while unique_name in sheet_file_map:
+                        unique_name = f"{original_name}_{suffix}"
+                        suffix += 1
+
+                    if unique_name != original_name:
+                        print(f"    ⚠️ Sheet名称冲突: '{original_name}' → '{unique_name}'")
+
+                    all_sheets.append(unique_name)
+                    sheet_file_map[unique_name] = file_path
+
+                    # 添加到工作簿管理器
+                    sheet_info = self.workbook_manager.add_worksheet(unique_name, SheetType.DATA_SOURCE)
+
+                    # 获取sheet的基本信息
+                    sheet = wb[original_name]
+                    sheet_info.max_row = sheet.max_row or 0
+                    sheet_info.max_column = sheet.max_column or 0
+
+                wb.close()
+
+            # 保存sheet到文件的映射
+            self.workbook_manager.sheet_file_mapping = sheet_file_map
+
+            print(f"\n合并完成: 共 {len(all_sheets)} 个sheet来自 {len(file_paths)} 个文件")
+
+            # 自动分类所有sheet
+            self._auto_classify_sheets_multi_file()
+
+            return True, f"成功加载 {len(file_paths)} 个文件，共 {len(all_sheets)} 个工作表"
+
+        except Exception as e:
+            error_msg = f"加载多个文件失败: {str(e)}"
+            print(error_msg)
+            return False, error_msg
+
+    def _auto_classify_sheets_multi_file(self) -> None:
+        """自动分类工作表（多文件模式）"""
+        if not self.workbook_manager:
+            return
+
+        print("\n=== 自动分类工作表（多文件模式）===")
+
+        # 清空之前的分类
+        self.workbook_manager.flash_report_sheets.clear()
+        self.workbook_manager.data_source_sheets.clear()
+
+        for sheet_name, sheet_info in self.workbook_manager.worksheets.items():
+            # 自动分类
+            if self._is_flash_report_sheet(sheet_name):
+                sheet_info.sheet_type = SheetType.FLASH_REPORT
+                self.workbook_manager.flash_report_sheets.append(sheet_name)
+                print(f"  ✅ {sheet_name} → 快报表")
+            else:
+                sheet_info.sheet_type = SheetType.DATA_SOURCE
+                self.workbook_manager.data_source_sheets.append(sheet_name)
+                print(f"  ✅ {sheet_name} → 数据来源表")
+
+        print(f"\n快报表数量: {len(self.workbook_manager.flash_report_sheets)}")
+        print(f"数据来源表数量: {len(self.workbook_manager.data_source_sheets)}")
 
     def _analyze_all_sheets(self) -> None:
         """分析所有工作表的基本信息"""
@@ -410,15 +784,27 @@ class FileManager:
         return self.workbook_manager
 
     def _get_mapping_save_path(self, workbook_manager: WorkbookManager) -> Optional[str]:
-        """根据工作簿路径生成映射公式保存路径"""
+        """
+        根据工作簿生成映射公式保存路径
+        保存到程序目录/Fomular/Backup/{文件名}.mapping.json
+
+        Args:
+            workbook_manager: 工作簿管理器
+
+        Returns:
+            Optional[str]: 保存路径，如果失败返回None
+        """
         if not workbook_manager or not workbook_manager.file_path:
             return None
 
-        base_path, _ = os.path.splitext(workbook_manager.file_path)
-        if not base_path:
-            return None
+        # 获取Excel文件名（不含路径）
+        excel_file_name = Path(workbook_manager.file_path).stem
 
-        return f"{base_path}.mapping.json"
+        # 保存到程序目录/Fomular/Backup/
+        self._ensure_directory(self.formula_backup_dir)
+        mapping_file = self.formula_backup_dir / f"{excel_file_name}.mapping.json"
+
+        return str(mapping_file)
 
     def save_mapping_formulas(self, workbook_manager: WorkbookManager) -> bool:
         """将映射公式保存到本地JSON文件"""
@@ -439,6 +825,8 @@ class FileManager:
                         "formula": formula.formula,
                         "constant_value": formula.constant_value,
                         "status": formula.status.value if hasattr(formula, 'status') else FormulaStatus.USER_MODIFIED.value,
+                        "ai_confidence": getattr(formula, "ai_confidence", 0.0),
+                        "ai_reasoning": getattr(formula, "ai_reasoning", ""),
                         "notes": getattr(formula, 'notes', "")
                     })
 
@@ -485,6 +873,8 @@ class FileManager:
                 constant_value = entry.get("constant_value")
                 status_value = entry.get("status", FormulaStatus.USER_MODIFIED.value)
                 notes = entry.get("notes", "")
+                ai_confidence = entry.get("ai_confidence")
+                ai_reasoning = entry.get("ai_reasoning", "")
 
                 try:
                     status = FormulaStatus(status_value)
@@ -495,6 +885,12 @@ class FileManager:
                 mapping.update_formula(formula_text, status=status, column_name=column_name)
                 mapping.constant_value = constant_value
                 mapping.notes = notes
+                if ai_confidence is not None:
+                    try:
+                        mapping.ai_confidence = max(0.0, min(1.0, float(ai_confidence)))
+                    except (TypeError, ValueError):
+                        mapping.ai_confidence = 0.0
+                mapping.ai_reasoning = ai_reasoning
 
                 applied_count += 1
 
